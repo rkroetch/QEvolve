@@ -39,6 +39,7 @@ LIBS += opengl32.lib
 LIBS += glu32.lib
 
 DEFINES += _USE_MATH_DEFINES
+DEFINES += NOMINMAX
 
 #QMAKE_CXXFLAGS += -pg
 #QMAKE_LFLAGS += -pg

@@ -1,0 +1,22 @@
+{
+  "cmake.configureSettings": {
+    "CMAKE_PREFIX_PATH": "C:/Qt/6.11.2/msvc2022_64"
+  },
+  "cmake.environment": {
+    "PATH": "C:\\Qt\\6.11.2\\msvc2022_64\\bin;${env:PATH}",
+    "QT_PLUGIN_PATH": "C:\\Qt\\6.11.2\\msvc2022_64\\plugins"
+  },
+  "cmake.debugConfig": {
+    "type": "cppvsdbg",
+    "environment": [
+      {
+        "name": "PATH",
+        "value": "C:\\Qt\\6.11.2\\msvc2022_64\\bin;${env:PATH}"
+      },
+      {
+        "name": "QT_PLUGIN_PATH",
+        "value": "C:\\Qt\\6.11.2\\msvc2022_64\\plugins"
+      }
+    ]
+  }
+}

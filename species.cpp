@@ -24,7 +24,15 @@ Species::Species(SpeciesType type, QObject * parent) : QObject(parent),
 
 Species::~Species()
 {
-    mSpeciesList.removeAt(mSpeciesIndex);
+    clear();
+    const qsizetype index = mSpeciesList.indexOf(this);
+    if (index < 0) {
+        return;
+    }
+    mSpeciesList.removeAt(index);
+    for (qsizetype i = index; i < mSpeciesList.size(); ++i) {
+        mSpeciesList[i]->mSpeciesIndex = static_cast<int>(i);
+    }
 }
 
 void Species::initialize(int numAnimals, int maxAnimals, int initialEnergy)
@@ -636,6 +644,11 @@ QColor Species::color() const
 }
 
 QList<Animal*> & Species::animals()
+{
+    return mAnimals;
+}
+
+const QList<Animal*> & Species::animals() const
 {
     return mAnimals;
 }

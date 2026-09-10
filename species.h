@@ -87,6 +87,7 @@ public:
     QColor color() const;
 
     QList<Animal*> & animals();
+    const QList<Animal*> & animals() const;
 
     void save(const QString & filename);
 

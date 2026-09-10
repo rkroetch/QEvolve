@@ -1,0 +1,23 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Run QEvolve",
+            "type": "process",
+            "command": "${command:cmake.launchTargetPath}",
+            "options": {
+                "cwd": "${command:cmake.launchTargetDirectory}",
+                "env": {
+                    "PATH": "C:\\Qt\\6.11.2\\msvc2022_64\\bin;${env:PATH}",
+                    "QT_PLUGIN_PATH": "C:\\Qt\\6.11.2\\msvc2022_64\\plugins"
+                }
+            },
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "silent",
+                "panel": "dedicated",
+                "showReuseMessage": false
+            }
+        }
+    ]
+}

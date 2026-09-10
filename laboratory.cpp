@@ -18,9 +18,11 @@
 #include <QSizeF>
 #include <QColor>
 #include <QDir>
+#include <QVector>
 #include <QtConcurrent/QtConcurrentMap>
 #include <QReadLocker>
 #include <QWriteLocker>
+#include <QThreadPool>
 
 QReadWriteLock positionLock;
 
@@ -64,8 +66,13 @@ Laboratory::Laboratory(QWidget *parent) :
 }
 
 Laboratory::~Laboratory()
-{   
+{
+    // CalculationThread / QtConcurrent may still be touching Species and Animal
+    // objects. Stop and wait before deleting them, or closing the window crashes.
+    stop();
+    QThreadPool::globalInstance()->waitForDone();
     qDeleteAll(mSpecies);
+    mSpecies.clear();
     delete ui;
 }
 
@@ -81,6 +88,7 @@ QList<Species*> & Laboratory::species()
 
 int Laboratory::numAnimals() const
 {
+    QReadLocker locker(&positionLock);
     int numAnimals = 0;
     foreach ( Species * species, mSpecies )
     {
@@ -94,6 +102,7 @@ int Laboratory::numAnimals() const
 
 QString Laboratory::statistics() const
 {
+    QReadLocker locker(&positionLock);
     QString stats;
     foreach ( Species * species, mSpecies )
     {
@@ -224,21 +233,44 @@ void Laboratory::paintGL()
 //    }
 //    glDisableClientState(GL_VERTEX_ARRAY);  // disable vertex arrays
 
-    glBegin(GL_QUADS);
-    positionLock.lockForRead();
-    foreach ( Species * species, mSpecies )
+    struct PaintQuad
     {
-//        glColor4f(species->color().redF(), species->color().blueF(), species->color().greenF(), 0.25f);
-        glColor3f(species->color().redF(), species->color().greenF(), species->color().blueF());
-        foreach ( const Animal* animal, species->animals() )
+        GLfloat r, g, b;
+        QPointF pos;
+    };
+    QVector<PaintQuad> quads;
+    {
+        QReadLocker locker(&positionLock);
+        for (const Species * species : qAsConst(mSpecies))
         {
-            glVertex2f( animal->pos().x() - 1, animal->pos().y() + 1);
-            glVertex2f( animal->pos().x() + 1, animal->pos().y() + 1);
-            glVertex2f( animal->pos().x() + 1, animal->pos().y() - 1);
-            glVertex2f( animal->pos().x() - 1, animal->pos().y() - 1);
+            const QColor color = species->color();
+            const PaintQuad style{
+                static_cast<GLfloat>(color.redF()),
+                static_cast<GLfloat>(color.greenF()),
+                static_cast<GLfloat>(color.blueF()),
+                {}
+            };
+            const QList<Animal *> animals = species->animals();
+            for (const Animal * animal : animals)
+            {
+                if (!animal)
+                {
+                    continue;
+                }
+                quads.append({style.r, style.g, style.b, animal->pos()});
+            }
         }
     }
-    positionLock.unlock();
+
+    glBegin(GL_QUADS);
+    for (const PaintQuad & quad : qAsConst(quads))
+    {
+        glColor3f(quad.r, quad.g, quad.b);
+        glVertex2f(quad.pos.x() - 1, quad.pos.y() + 1);
+        glVertex2f(quad.pos.x() + 1, quad.pos.y() + 1);
+        glVertex2f(quad.pos.x() + 1, quad.pos.y() - 1);
+        glVertex2f(quad.pos.x() - 1, quad.pos.y() - 1);
+    }
     glEnd();
 }
 
@@ -422,9 +454,12 @@ void CalculationThread::run()
 //        QtConcurrent::blockingMap(mLaboratory->species(), moveSpecies);
 
         QList<Animal *> animals;
-        foreach ( Species * species, mLaboratory->species() )
         {
-            animals += species->animals();
+            QReadLocker locker(&positionLock);
+            foreach ( Species * species, mLaboratory->species() )
+            {
+                animals += species->animals();
+            }
         }
         auto numAnimalsPerThread = animals.size() / 16;
         QList<QList<Animal *>> animalLists;
@@ -438,14 +473,21 @@ void CalculationThread::run()
         }
         QtConcurrent::blockingMap(animalLists, moveAnimals);
 
+        {
+            QMutexLocker locker(&mStopMutex);
+            if ( mStop )
+            {
+                return;
+            }
+        }
+
         positionLock.lockForWrite();
         QtConcurrent::blockingMap(mLaboratory->species(), executeMovement);
-        positionLock.unlock();
-
         foreach ( Species * species, mLaboratory->species() )
         {
             species->respawn(1, 500);
         }
+        positionLock.unlock();
 
         mDataMutex.lock();
         mNumCycles++;
