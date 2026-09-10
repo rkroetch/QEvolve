@@ -19,7 +19,6 @@
             "program": "${command:cmake.launchTargetPath}",
             "args": [],
             "cwd": "${command:cmake.launchTargetDirectory}",
-            "stopAtEntry": false,
             "env": {
                 "PATH": "C:\\Qt\\6.11.2\\msvc2022_64\\bin;${env:PATH}",
                 "QT_PLUGIN_PATH": "C:\\Qt\\6.11.2\\msvc2022_64\\plugins"

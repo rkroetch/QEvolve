@@ -2,15 +2,14 @@ cmake_minimum_required(VERSION 3.16)
 project(QEvolve VERSION 1.0 LANGUAGES C CXX)
 
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
-
-# Set up AUTOMOC and some sensible defaults for runtime execution
-# When using Qt 6.3, you can replace the code block below with
-# qt_standard_project_setup()
-set(CMAKE_AUTOMOC ON)
-include(GNUInstallDirs)
 set(CMAKE_AUTOUIC ON)
 
 find_package(Qt6 REQUIRED COMPONENTS Charts Concurrent Gui OpenGL OpenGLWidgets Widgets)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+qt_standard_project_setup()
 
 qt_add_executable(QEvolve WIN32 MACOSX_BUNDLE
     animal.cpp animal.h
@@ -25,8 +24,8 @@ qt_add_executable(QEvolve WIN32 MACOSX_BUNDLE
     speciesbuttonwidget.cpp speciesbuttonwidget.h
 )
 target_compile_definitions(QEvolve PRIVATE
-    _USE_MATH_DEFINES
     NOMINMAX
+    _USE_MATH_DEFINES
 )
 
 target_link_libraries(QEvolve PRIVATE
@@ -41,12 +40,12 @@ target_link_libraries(QEvolve PRIVATE
     opengl32.lib
 )
 
-get_filename_component(QT_WINDEPLOYQT_DIR "${Qt6_DIR}/../../../bin" ABSOLUTE)
-find_program(WINDEPLOYQT_EXECUTABLE windeployqt HINTS "${QT_WINDEPLOYQT_DIR}" REQUIRED)
-add_custom_command(TARGET QEvolve POST_BUILD
-    COMMAND "${WINDEPLOYQT_EXECUTABLE}" --verbose 0 --no-translations "$<TARGET_FILE:QEvolve>"
-    COMMENT "Deploying Qt runtime next to QEvolve"
-)
+
+include(CheckIPOSupported)
+check_ipo_supported(RESULT ipo_supported OUTPUT ipo_error)
+if(ipo_supported)
+    set_property(TARGET QEvolve PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
+endif()
 
 
 # Resources:
@@ -102,6 +101,9 @@ install(TARGETS QEvolve
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
-# Consider using qt_generate_deploy_app_script() for app deployment if
-# the project can use Qt 6.3. In that case rerun qmake2cmake with
-# --min-qt-version=6.3.
+qt_generate_deploy_app_script(
+    TARGET QEvolve
+    OUTPUT_SCRIPT deploy_script
+    NO_UNSUPPORTED_PLATFORM_ERROR
+)
+install(SCRIPT ${deploy_script})
