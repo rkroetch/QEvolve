@@ -1,0 +1,34 @@
+<RCC>
+    <qresource prefix="/icons">
+        <file>resources/icons/dna.png</file>
+        <file>resources/icons/color_picker.png</file>
+        <file>resources/icons/save.png</file>
+    </qresource>
+    <qresource prefix="/actions">
+        <file>resources/actions/arrow_branch.png</file>
+        <file>resources/actions/arrow_divide.png</file>
+        <file>resources/actions/arrow_down.png</file>
+        <file>resources/actions/arrow_in.png</file>
+        <file>resources/actions/arrow_inout.png</file>
+        <file>resources/actions/arrow_join.png</file>
+        <file>resources/actions/arrow_left.png</file>
+        <file>resources/actions/arrow_merge.png</file>
+        <file>resources/actions/arrow_out.png</file>
+        <file>resources/actions/arrow_redo.png</file>
+        <file>resources/actions/arrow_refresh.png</file>
+        <file>resources/actions/arrow_refresh_small.png</file>
+        <file>resources/actions/arrow_right.png</file>
+        <file>resources/actions/arrow_rotate_anticlockwise.png</file>
+        <file>resources/actions/arrow_rotate_clockwise.png</file>
+        <file>resources/actions/arrow_switch.png</file>
+        <file>resources/actions/arrow_turn_left.png</file>
+        <file>resources/actions/arrow_turn_right.png</file>
+        <file>resources/actions/arrow_undo.png</file>
+        <file>resources/actions/arrow_up.png</file>
+        <file>resources/actions/stop.png</file>
+        <file>resources/actions/arrow_left_down.png</file>
+        <file>resources/actions/arrow_left_up.png</file>
+        <file>resources/actions/arrow_right_down.png</file>
+        <file>resources/actions/arrow_right_up.png</file>
+    </qresource>
+</RCC>
