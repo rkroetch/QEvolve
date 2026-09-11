@@ -48,6 +48,44 @@ if(ipo_supported)
 endif()
 
 
+# Micro-benchmarks for the simulation core (Species/Animal). On by default,
+# so QEvolveBenchmarks builds as part of ALL_BUILD like every other target;
+# set to OFF to skip fetching/building Google Benchmark.
+option(QEVOLVE_BUILD_BENCHMARKS "Build the Google Benchmark micro-benchmarks for Species/Animal" ON)
+if(QEVOLVE_BUILD_BENCHMARKS)
+    include(FetchContent)
+    set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+    set(BENCHMARK_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+    set(BENCHMARK_ENABLE_WERROR OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(
+        googlebenchmark
+        GIT_REPOSITORY https://github.com/google/benchmark.git
+        GIT_TAG        v1.9.4
+        GIT_SHALLOW    TRUE
+    )
+    FetchContent_MakeAvailable(googlebenchmark)
+
+    add_executable(QEvolveBenchmarks
+        animal.cpp animal.h
+        common.h
+        species.cpp species.h
+        benchmarks/species_benchmark.cpp
+    )
+    set_target_properties(QEvolveBenchmarks PROPERTIES AUTOMOC ON)
+    target_include_directories(QEvolveBenchmarks PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_compile_definitions(QEvolveBenchmarks PRIVATE
+        NOMINMAX
+        _USE_MATH_DEFINES
+    )
+    target_link_libraries(QEvolveBenchmarks PRIVATE
+        Qt::Concurrent
+        Qt::Core
+        Qt::Gui
+        benchmark::benchmark
+    )
+endif()
+
+
 # Resources:
 set(resources_resource_files
     "resources/icons/color_picker.png"

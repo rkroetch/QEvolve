@@ -8,10 +8,15 @@
 #include <QList>
 #include <QFuture>
 #include <QReadWriteLock>
+#include <QMutex>
 #include <QThread>
+#include <QVector>
+#include <QAtomicInteger>
+#include <atomic>
 #include <Windows.h>
 
 #include <gl/GL.h>
+#include "common.h"
 
 enum PlantPattern
 {
@@ -24,11 +29,14 @@ class Animal;
 class Species;
 class CalculationThread;
 
-constexpr int LABORATORY_WIDTH = 360;
-constexpr int LABORATORY_HEIGHT = 360;
-constexpr int MAX_NUM_PLANTS = 2000;
-constexpr int PLANT_INITIAL_ENERGY = 500;
-constexpr int PLANT_SPAWN_ENERGY = 1000;
+struct PaintQuad
+{
+    GLfloat r = 0;
+    GLfloat g = 0;
+    GLfloat b = 0;
+    GLfloat x = 0;
+    GLfloat y = 0;
+};
 
 namespace Ui {
     class Laboratory;
@@ -49,16 +57,17 @@ public:
 
     QList<Animal*> & animals();
     QList<Species*> & species();
-    int speed() const { return mSpeed; }
+    int speed() const { return mSpeed.loadRelaxed(); }
     int numAnimals() const;
     QString statistics() const;
     double cyclesPerSecond();
+    void captureFrame();
 
     PlantPattern plantPattern() const { return mSettings.plantPattern; }
 
 public slots:
-    //0 - 100, 0 being fastest
-    void setSpeed(int speed) { mSpeed = speed; }
+    //0 being fastest
+    void setSpeed(int speed) { mSpeed.storeRelaxed(speed); }
     void toggleStart();
     void start();
     void stop();
@@ -87,7 +96,11 @@ private:
     QList<Animal*> mAnimals;
     QReadWriteLock mPositionLock;
     CalculationThread * mCalculationThread;
-    int mSpeed;
+    QAtomicInteger<int> mSpeed = 0;
+    mutable QMutex mPaintMutex;
+    QVector<PaintQuad> mPaintSnapshot;
+    QAtomicInteger<int> mCachedNumAnimals = 0;
+    QString mCachedStatistics;
 
     GLfloat mVertices[8 * 10000]{};
 };
@@ -103,9 +116,9 @@ public:
 
 private:
     Laboratory * mLaboratory;
-    bool mStop;
-    QMutex mStopMutex;
+    std::atomic<bool> mStop{false};
     QMutex mDataMutex;
+    QVector<Animal *> mCalcAnimals;
     qint64 mNumCycles = 0;
     qint64 mLastNumCycles = 0;
     QElapsedTimer mPerformanceTimer;

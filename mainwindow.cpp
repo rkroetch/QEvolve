@@ -64,8 +64,9 @@ void MainWindow::updateStatusBar()
 {
     const int old_scrollbar_value = ui->textBrowser->verticalScrollBar()->value();
 
-    qreal calculationsPerSecond = ui->laboratory->numAnimals() * ui->laboratory->cyclesPerSecond();
-    mNumAnimalsLabel.setText(QString::number(ui->laboratory->numAnimals()) + "-" + QString::number(calculationsPerSecond, 'f', 2));
+    const int numAnimals = ui->laboratory->numAnimals();
+    qreal calculationsPerSecond = numAnimals * ui->laboratory->cyclesPerSecond();
+    mNumAnimalsLabel.setText(QString::number(numAnimals) + "-" + QString::number(calculationsPerSecond, 'f', 2));
     ui->textBrowser->setText(ui->laboratory->statistics());
     ui->textBrowser->verticalScrollBar()->setValue(old_scrollbar_value);
 

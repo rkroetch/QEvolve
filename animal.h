@@ -1,14 +1,13 @@
 #ifndef ANIMAL_H
 #define ANIMAL_H
 
-#include <QGraphicsRectItem>
 #include <QPoint>
-#include <QRect>
 #include <QPointF>
-#include <random>
-#include "laboratory.h"
-#include "species.h"
+#include <QColor>
+#include <atomic>
 #include "common.h"
+
+class Species;
 
 class Animal
 {
@@ -31,8 +30,8 @@ public:
     };
 
 public:
-    explicit Animal() = default;
-    explicit Animal(QPointF pos, Species * species, double energy, int spawningEnergy, int metabolism, const Movements & movements);
+    Animal() = default;
+    Animal(QPointF pos, Species * species, double energy, int spawningEnergy, int metabolism, const Movements & movements);
     ~Animal() = default;
     void initialize(QPointF pos, Species * species, double energy, int spawningEnergy, int metabolism, const Movements & movements, QPointF direction, const Animal *parent);
 
@@ -40,14 +39,16 @@ public:
     void calculateMovement();
     void executeMovement();
 
+    bool tryClaimEaten();
+    bool isEaten() const;
     void markAsEaten();
 
     void setPos(QPointF pos);
     const QPointF & pos() const;
+    int cellX() const { return mCellX; }
+    int cellY() const { return mCellY; }
 
     const QColor & color() const;
-
-    QPointF movement(unsigned int friends, unsigned int enemies) const;
 
     double energy() const;
     void setEnergy(double energy);
@@ -62,26 +63,34 @@ public:
 
     const Statistics & statistics() const;
 
+    int listIndex() const { return mListIndex; }
+    void setListIndex(int index) { mListIndex = index; }
+    int cellSlot() const { return mCellSlot; }
+    void setCellSlot(int slot) { mCellSlot = slot; }
+
 protected:
     void killSelf();
     void spawnSelf();
+    void syncCellFromPos();
 
 private:
     Statistics mStatistics;
-    std::random_device mRd;  //Will be used to obtain a seed for the random number engine
-    std::mt19937 mRdGen; //Standard mersenne_twister_engine seeded with rd()
     QPointF mNextPos;
     QPointF mNextMovement;
     QPointF mPos;
     QPointF mDirection;
     QColor mColor;
     double mNextEnergyDiff = 0.0;
-    bool   mNextEaten = false;
+    std::atomic<bool> mNextEaten{false};
     double mEnergy = 0.0;
     int mMetabolism = 0;
     int mSpawningEnergy = 0;
+    int mCellX = 0;
+    int mCellY = 0;
+    int mListIndex = -1;
+    int mCellSlot = -1;
 
-    Species * mSpecies;
+    Species * mSpecies = nullptr;
     //[Friends][Enemies]
     Movements mMovements;
 };

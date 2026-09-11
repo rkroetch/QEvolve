@@ -1,15 +1,9 @@
 #include "animal.h"
-#include <QGraphicsScene>
-#include <QList>
-#include <QDebug>
-#include <QBrush>
+#include "species.h"
 
-Animal::Animal(QPointF pos, Species * species, double energy, int spawningEnergy, int metabolism, const Movements & movements) :
-    mRdGen(mRd())
+Animal::Animal(QPointF pos, Species * species, double energy, int spawningEnergy, int metabolism, const Movements & movements)
 {
-    std::uniform_int_distribution<> randDirection(-1, 1);
-    QPointF direction(randDirection(mRdGen), randDirection(mRdGen));
-
+    const QPointF direction(randIntInclusive(-1, 1), randIntInclusive(-1, 1));
     initialize(pos, species, energy, spawningEnergy, metabolism, movements, direction, nullptr);
 }
 
@@ -22,44 +16,44 @@ void Animal::initialize(QPointF pos, Species * species, double energy, int spawn
         mStatistics.mNumChildren = 0;
         mStatistics.mAge = 0;
     }
+    else
+    {
+        mStatistics = Statistics{};
+    }
     mSpecies = species;
 
     mPos = pos;
+    syncCellFromPos();
 
     mColor = species->color();
     mEnergy = energy;
     mStatistics.mEnergy = mEnergy;
 
-    std::uniform_int_distribution<> randOffset(1, 100);
-    if ( (mSpecies->metabolismMutation()) > 0 && (randOffset(mRdGen) <= mSpecies->metabolismMutation()) )
+    if ( (mSpecies->metabolismMutation()) > 0 && (randIntInclusive(1, 100) <= mSpecies->metabolismMutation()) )
     {
-        std::uniform_int_distribution<> randMetabolism(-5, 5);
-        metabolism += randMetabolism(mRdGen);
+        metabolism += randIntInclusive(-5, 5);
         ++mStatistics.mNumMutationsMetabolism;
     }
     setMetabolism(metabolism);
 
-    if ( (mSpecies->spawningEnergyMutation()) > 0 && (randOffset(mRdGen) <= mSpecies->spawningEnergyMutation()) )
+    if ( (mSpecies->spawningEnergyMutation()) > 0 && (randIntInclusive(1, 100) <= mSpecies->spawningEnergyMutation()) )
     {
-        std::uniform_int_distribution<> randEnergy(-100, 100);
-        spawningEnergy += randEnergy(mRdGen);
+        spawningEnergy += randIntInclusive(-100, 100);
         ++mStatistics.mNumMutationsSpawningEnergy;
     }
     setSpawningEnergy(spawningEnergy);
 
-    //Copy over our movements from our parent
     mMovements = movements;
-    if ( (mSpecies->movementMutation()) > 0 && (randOffset(mRdGen) <= mSpecies->movementMutation()) )
+    if ( (mSpecies->movementMutation()) > 0 && (randIntInclusive(1, 100) <= mSpecies->movementMutation()) )
     {
-        std::uniform_int_distribution<> randMove(0, 2);
-        std::uniform_int_distribution<> randDirection(0, MoveMax-1);
-        mMovements.setMovement(randMove(mRdGen), randMove(mRdGen), static_cast<MovementDirections>(randDirection(mRdGen)));
+        mMovements.setMovement(randIntInclusive(0, 2), randIntInclusive(0, 2),
+                               static_cast<MovementDirections>(randIntInclusive(0, MoveMax - 1)));
         ++mStatistics.mNumMutationsMovement;
     }
 
     mDirection =  direction;
     mNextEnergyDiff = 0;
-    mNextEaten = false;
+    mNextEaten.store(false, std::memory_order_relaxed);
 }
 
 QPointF Animal::movement(unsigned int friends, unsigned int enemies, const QPointF &curDirection) const
@@ -83,7 +77,7 @@ QPointF Animal::movement(unsigned int friends, unsigned int enemies, const QPoin
     case MoveUpLeft:
         return QPointF(-0.5, -0.5);
     case MoveRandom:
-        return QPointF(qreal((rand() % 3) - 1.0) / 2.0, qreal((rand() % 3) - 1.0) / 2.0);
+        return QPointF(qreal(randIntInclusive(-1, 1)) / 2.0, qreal(randIntInclusive(-1, 1)) / 2.0);
     case MoveStop:
         return QPointF(0.0, 0.0);
     case MoveGo:
@@ -96,21 +90,21 @@ QPointF Animal::movement(unsigned int friends, unsigned int enemies, const QPoin
         return QPointF(-curDirection.y(), curDirection.x());
     case MoveMerge:
     {
-        const QVector<Animal*> & friends = mSpecies->friends(mPos);
-        if ( friends.isEmpty() )
+        const Animal * neighbor = mSpecies->firstNeighbor(mCellX, mCellY);
+        if ( !neighbor )
         {
             return curDirection;
         }
-        return friends.first()->mDirection;
+        return neighbor->mDirection;
     }
     case MoveSplit:
     {
-        const QVector<Animal*> & friends = mSpecies->friends(mPos);
-        if ( friends.isEmpty() )
+        const Animal * neighbor = mSpecies->firstNeighbor(mCellX, mCellY);
+        if ( !neighbor )
         {
             return curDirection;
         }
-        return QPointF(qreal((rand() % 3) - 1.0) / 2.0, qreal((rand() % 3) - 1.0) / 2.0);
+        return QPointF(qreal(randIntInclusive(-1, 1)) / 2.0, qreal(randIntInclusive(-1, 1)) / 2.0);
     }
     default:
         return QPointF(0.0, 0.0);
@@ -120,6 +114,13 @@ QPointF Animal::movement(unsigned int friends, unsigned int enemies, const QPoin
 void Animal::setPos(QPointF pos)
 {
     mPos = pos;
+    syncCellFromPos();
+}
+
+void Animal::syncCellFromPos()
+{
+    mCellX = clampCellX(int(mPos.x()));
+    mCellY = clampCellY(int(mPos.y()));
 }
 
 const QPointF & Animal::pos() const
@@ -183,35 +184,26 @@ void Animal::calculateMovement()
         return;
     }
 
-    //Dont include ourselves in the count
-    int friends = mSpecies->friendCount(mPos) - 1;
-    int enemies = mSpecies->enemyCount(mPos);
-    int plants = mSpecies->plantCount(mPos);
+    const int friends = mSpecies->friendCount(mCellX, mCellY) - 1;
+    const int enemies = mSpecies->enemyCount(mCellX, mCellY);
+    const int plants = mSpecies->plantCount(mCellX, mCellY);
 
     mStatistics.mNumFriends = static_cast<uint>(friends);
     mStatistics.mNumEnemies = static_cast<uint>(enemies);
 
     if ( plants > 0 )
     {
-        Animal * weakestPlant = nullptr;
-        double energy = mSpecies->eatWeakestPlant(mPos, weakestPlant);
-        if ( weakestPlant )
-        {
-            mNextEnergyDiff += (energy / (enemies + friends + 1));
-        }
+        mNextEnergyDiff += mSpecies->eatWeakestPlant(mCellX, mCellY) / qMax(1, enemies + friends + 1);
     }
 
     if ( enemies > 0 && friends >= 3)
     {
-        Animal * weakestAnimal = nullptr;
-        double energy = mSpecies->killWeakestEnemy(mPos, weakestAnimal);
-        if ( weakestAnimal )
-        {
-            mNextEnergyDiff += (energy / friends);
-        }
+        mNextEnergyDiff += mSpecies->killWeakestEnemy(mCellX, mCellY) / qMax(friends, 1);
     }
 
-    mDirection = movement(friends, enemies, mDirection);
+    mDirection = movement(static_cast<unsigned int>(qMax(friends, 0)),
+                          static_cast<unsigned int>(qMax(enemies, 0)),
+                          mDirection);
     mNextMovement = (mDirection * (mMetabolism / 100.0));
 
     mNextPos = mPos + mNextMovement;
@@ -238,8 +230,7 @@ void Animal::executeMovement()
 {
     ++mStatistics.mAge;
 
-    //If we were eaten last cycle, kill ourselves
-    if ( mNextEaten )
+    if ( mNextEaten.load(std::memory_order_relaxed) )
     {
         killSelf();
         return;
@@ -273,19 +264,34 @@ void Animal::executeMovement()
 
     if ( species()->type() == Species::typeAnimal )
     {
-        mSpecies->moveAnimal(mPos, mNextPos, this);
+        const int newX = clampCellX(int(mNextPos.x()));
+        const int newY = clampCellY(int(mNextPos.y()));
+        mSpecies->moveAnimal(mCellX, mCellY, newX, newY, this);
         mPos = mNextPos;
+        mCellX = newX;
+        mCellY = newY;
     }
+}
+
+bool Animal::tryClaimEaten()
+{
+    bool expected = false;
+    return mNextEaten.compare_exchange_strong(expected, true, std::memory_order_relaxed);
+}
+
+bool Animal::isEaten() const
+{
+    return mNextEaten.load(std::memory_order_relaxed);
 }
 
 void Animal::markAsEaten()
 {
-    mNextEaten = true;
+    mNextEaten.store(true, std::memory_order_relaxed);
 }
 
 void Animal::killSelf()
 {
-    mSpecies->killAnimal(mPos, this);
+    mSpecies->killAnimal(mCellX, mCellY, this);
 }
 
 void Animal::spawnSelf()
@@ -295,6 +301,3 @@ void Animal::spawnSelf()
     mStatistics.mEnergy = mEnergy;
     ++mStatistics.mNumChildren;
 }
-
-
-

@@ -23,6 +23,8 @@
 #include <QReadLocker>
 #include <QWriteLocker>
 #include <QThreadPool>
+#include <QMutexLocker>
+#include <QPair>
 
 QReadWriteLock positionLock;
 
@@ -32,7 +34,7 @@ Laboratory::Laboratory(QWidget *parent) :
 {
     ui->setupUi(this);
 
-    mSpeed = 10;
+    mSpeed = 0;
 
     setMinimumWidth(LABORATORY_WIDTH);
     setMinimumHeight(LABORATORY_HEIGHT);
@@ -88,37 +90,52 @@ QList<Species*> & Laboratory::species()
 
 int Laboratory::numAnimals() const
 {
-    QReadLocker locker(&positionLock);
-    int numAnimals = 0;
-    foreach ( Species * species, mSpecies )
-    {
-        if ( species->type() == Species::typeAnimal )
-        {
-            numAnimals += species->animals().size();
-        }
-    }
-    return numAnimals;
+    return mCachedNumAnimals.loadRelaxed();
 }
 
 QString Laboratory::statistics() const
 {
-    QReadLocker locker(&positionLock);
+    QMutexLocker locker(&mPaintMutex);
+    return mCachedStatistics;
+}
+
+void Laboratory::captureFrame()
+{
+    QVector<PaintQuad> quads;
     QString stats;
-    foreach ( Species * species, mSpecies )
+    int numAnimals = 0;
+    for (const Species * species : qAsConst(mSpecies))
     {
-        if ( species->type() == Species::typePlant )
+        const QColor color = species->color();
+        const PaintQuad style{
+            static_cast<GLfloat>(color.redF()),
+            static_cast<GLfloat>(color.greenF()),
+            static_cast<GLfloat>(color.blueF()),
+            0,
+            0
+        };
+        const QVector<Animal *> & animals = species->animals();
+        if (species->type() == Species::typeAnimal)
         {
-            stats += species->statistics();
+            numAnimals += int(animals.size());
+        }
+        stats += species->statistics();
+        for (const Animal * animal : animals)
+        {
+            if (!animal)
+            {
+                continue;
+            }
+            quads.append({style.r, style.g, style.b,
+                          static_cast<GLfloat>(animal->pos().x()),
+                          static_cast<GLfloat>(animal->pos().y())});
         }
     }
-    foreach ( Species * species, mSpecies )
-    {
-        if ( species->type() == Species::typeAnimal )
-        {
-            stats += species->statistics();
-        }
-    }
-    return stats;
+
+    QMutexLocker locker(&mPaintMutex);
+    mPaintSnapshot.swap(quads);
+    mCachedStatistics = stats;
+    mCachedNumAnimals.storeRelaxed(numAnimals);
 }
 
 double Laboratory::cyclesPerSecond()
@@ -204,74 +221,48 @@ void Laboratory::paintGL()
     glLoadIdentity();
     glTranslatef(0.375, 0.375, 0);
 
-//    glEnableClientState(GL_VERTEX_ARRAY);
-
-//    foreach ( Species * species, mSpecies )
-//    {
-////        glColor4f(species->color().redF(), species->color().blueF(), species->color().greenF(), 0.25f);
-//        glColor3f(species->color().redF(), species->color().greenF(), species->color().blueF());
-
-//        int vertexIndex = 0;
-//        int index = 0;
-//        for ( ; index < species->animals().size(); index++ )
-//        {
-//            vertexIndex = index * 8;
-//            Animal * animal = species->animals().at(index);
-//            mVertices[vertexIndex] = animal->pos().x() - 1;
-//            mVertices[vertexIndex + 1] = animal->pos().y() + 1;
-//            mVertices[vertexIndex + 2] = animal->pos().x() + 1;
-//            mVertices[vertexIndex + 3] = animal->pos().y() + 1;
-//            mVertices[vertexIndex + 4] = animal->pos().x() + 1;
-//            mVertices[vertexIndex + 5] = animal->pos().y() - 1;
-//            mVertices[vertexIndex + 6] = animal->pos().x() - 1;
-//            mVertices[vertexIndex + 7] = animal->pos().y() - 1;
-//        }
-
-//        glVertexPointer(2, GL_FLOAT, 0, mVertices);
-//        glDrawArrays(GL_QUADS, 0, (GLsizei)(index * 8));
-
-//    }
-//    glDisableClientState(GL_VERTEX_ARRAY);  // disable vertex arrays
-
-    struct PaintQuad
-    {
-        GLfloat r, g, b;
-        QPointF pos;
-    };
     QVector<PaintQuad> quads;
     {
-        QReadLocker locker(&positionLock);
-        for (const Species * species : qAsConst(mSpecies))
+        QMutexLocker locker(&mPaintMutex);
+        quads = mPaintSnapshot;
+    }
+
+    if (quads.isEmpty())
+    {
+        return;
+    }
+
+    QVector<GLfloat> vertices;
+    QVector<GLfloat> colors;
+    vertices.resize(quads.size() * 8);
+    colors.resize(quads.size() * 12);
+    GLfloat * vert = vertices.data();
+    GLfloat * col = colors.data();
+    for (const PaintQuad & quad : qAsConst(quads))
+    {
+        const GLfloat x = quad.x;
+        const GLfloat y = quad.y;
+        vert[0] = x - 1; vert[1] = y + 1;
+        vert[2] = x + 1; vert[3] = y + 1;
+        vert[4] = x + 1; vert[5] = y - 1;
+        vert[6] = x - 1; vert[7] = y - 1;
+        vert += 8;
+        for (int i = 0; i < 4; ++i)
         {
-            const QColor color = species->color();
-            const PaintQuad style{
-                static_cast<GLfloat>(color.redF()),
-                static_cast<GLfloat>(color.greenF()),
-                static_cast<GLfloat>(color.blueF()),
-                {}
-            };
-            const QList<Animal *> animals = species->animals();
-            for (const Animal * animal : animals)
-            {
-                if (!animal)
-                {
-                    continue;
-                }
-                quads.append({style.r, style.g, style.b, animal->pos()});
-            }
+            col[0] = quad.r;
+            col[1] = quad.g;
+            col[2] = quad.b;
+            col += 3;
         }
     }
 
-    glBegin(GL_QUADS);
-    for (const PaintQuad & quad : qAsConst(quads))
-    {
-        glColor3f(quad.r, quad.g, quad.b);
-        glVertex2f(quad.pos.x() - 1, quad.pos.y() + 1);
-        glVertex2f(quad.pos.x() + 1, quad.pos.y() + 1);
-        glVertex2f(quad.pos.x() + 1, quad.pos.y() - 1);
-        glVertex2f(quad.pos.x() - 1, quad.pos.y() - 1);
-    }
-    glEnd();
+    glEnableClientState(GL_VERTEX_ARRAY);
+    glEnableClientState(GL_COLOR_ARRAY);
+    glVertexPointer(2, GL_FLOAT, 0, vertices.constData());
+    glColorPointer(3, GL_FLOAT, 0, colors.constData());
+    glDrawArrays(GL_QUADS, 0, GLsizei(quads.size() * 4));
+    glDisableClientState(GL_COLOR_ARRAY);
+    glDisableClientState(GL_VERTEX_ARRAY);
 }
 
 int Laboratory::heightForWidth(int w) const
@@ -362,42 +353,31 @@ void Laboratory::initActors()
         }
     }
     positionLock.unlock();
+    captureFrame();
 }
 
-void moveAnimal(Animal * & animal)
+void calculateRange(const QPair<Animal * const *, int> & range)
 {
-    animal->calculateMovement();
-}
-
-void moveAnimals(const QList<Animal*> & animal)
-{
-    foreach ( Animal * animal, animal )
+    Animal * const * ptrs = range.first;
+    const int count = range.second;
+    for (int i = 0; i < count; ++i)
     {
-        animal->calculateMovement();
+        ptrs[i]->calculateMovement();
     }
 }
 
-void moveSpecies(Species * & species)
+void executeSpecies(Species * & species)
 {
-    foreach ( Animal * animal, species->animals() )
-    {
-        animal->calculateMovement();
-    }
-}
-
-void executeMovement(Species * & species)
-{
-    foreach ( Animal * animal, species->animals() )
+    const QVector<Animal*> snapshot = species->animals();
+    for (Animal * animal : snapshot)
     {
         animal->executeMovement();
     }
 }
 
 CalculationThread::CalculationThread(Laboratory * laboratory, QObject * parent) : QThread(parent),
-    mLaboratory(laboratory),
-    mStop(false)
+    mLaboratory(laboratory)
 {
-//    QueryPerformanceFrequency(&mCountsPerSecond);
 }
 
 double CalculationThread::cyclesPerSecond()
@@ -407,96 +387,90 @@ double CalculationThread::cyclesPerSecond()
     qint64 numCycles = mNumCycles - mLastNumCycles;
     mLastNumCycles = mNumCycles;
 
-    return double(numCycles) / (mPerformanceTimer.restart() / 1000.0);
-//    qint64 lastCounts = mCounts.QuadPart;
-
-//    QueryPerformanceCounter(&mCounts);
-//    qint64 numCounts = mCounts.QuadPart - lastCounts;
-//    qint64 numCycles = mNumCycles - mLastNumCycles;
-//    mLastNumCycles = mNumCycles;
-
-//    double seconds = double(numCounts) / double(mCountsPerSecond.QuadPart);
-
-//    return double(numCycles) / seconds;
+    const qint64 elapsedMs = mPerformanceTimer.restart();
+    if (elapsedMs <= 0)
+    {
+        return 0.0;
+    }
+    return double(numCycles) / (elapsedMs / 1000.0);
 }
 
 void CalculationThread::stop()
 {
-    QMutexLocker locker(&mStopMutex);
-    mStop = true;
+    mStop.store(true, std::memory_order_relaxed);
 }
 
 void CalculationThread::run()
 {
     mPerformanceTimer.start();
-
-    mStopMutex.lock();
-    mStop = false;
-    mStopMutex.unlock();
+    mStop.store(false, std::memory_order_relaxed);
 
     forever
     {
+        if ( mStop.load(std::memory_order_relaxed) )
         {
-            QMutexLocker locker(&mStopMutex);
-            if ( mStop )
-            {
-                qWarning() << "Stopping";
-                return;
-            }
+            qWarning() << "Stopping";
+            return;
         }
-//        QList<Animal *> animals;
-//        foreach ( Species * species, mLaboratory->species() )
-//        {
-//            animals += species->animals();
-//        }
-//        QtConcurrent::blockingMap(animals, moveAnimal);
 
-//        QtConcurrent::blockingMap(mLaboratory->species(), moveSpecies);
-
-        QList<Animal *> animals;
         {
             QReadLocker locker(&positionLock);
-            foreach ( Species * species, mLaboratory->species() )
+            mCalcAnimals.clear();
+            for (Species * species : mLaboratory->species())
             {
-                animals += species->animals();
+                if (species->type() != Species::typeAnimal)
+                {
+                    continue;
+                }
+                mCalcAnimals += species->animals();
+                species->advanceCombatCycle();
+            }
+            if (Species * plants = Species::plantSpecies())
+            {
+                plants->advanceCombatCycle();
             }
         }
-        auto numAnimalsPerThread = animals.size() / 16;
-        QList<QList<Animal *>> animalLists;
-        auto index = 0;
-        for ( int thread = 0; thread < 16; ++thread )
-        {
-            QList<Animal*> threadList;
-            threadList = animals.mid(index, numAnimalsPerThread);
-            index += threadList.size();
-            animalLists.append(threadList);
-        }
-        QtConcurrent::blockingMap(animalLists, moveAnimals);
 
+        if (!mCalcAnimals.isEmpty())
         {
-            QMutexLocker locker(&mStopMutex);
-            if ( mStop )
+            const int n = int(mCalcAnimals.size());
+            const int threadCount = qMax(1, qMin(n, QThread::idealThreadCount()));
+            QVector<QPair<Animal * const *, int>> ranges;
+            ranges.reserve(threadCount);
+            for (int t = 0; t < threadCount; ++t)
             {
-                return;
+                const int begin = t * n / threadCount;
+                const int end = (t + 1) * n / threadCount;
+                if (begin < end)
+                {
+                    ranges.append(qMakePair(mCalcAnimals.constData() + begin, end - begin));
+                }
             }
+            QtConcurrent::blockingMap(ranges, calculateRange);
+        }
+
+        if ( mStop.load(std::memory_order_relaxed) )
+        {
+            return;
         }
 
         positionLock.lockForWrite();
-        QtConcurrent::blockingMap(mLaboratory->species(), executeMovement);
-        foreach ( Species * species, mLaboratory->species() )
+        QtConcurrent::blockingMap(mLaboratory->species(), executeSpecies);
+        for (Species * species : mLaboratory->species())
         {
             species->respawn(1, 500);
         }
+        mLaboratory->captureFrame();
         positionLock.unlock();
 
         mDataMutex.lock();
         mNumCycles++;
         mDataMutex.unlock();
 
-        if ( mLaboratory->speed() != 0 )
+        const int speed = mLaboratory->speed();
+        if ( speed != 0 )
         {
-//            DELAY_CYCLE(mLaboratory->speed());
-            usleep(mLaboratory->speed());
+            usleep(speed);
         }
     }
 }

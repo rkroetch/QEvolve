@@ -4,11 +4,9 @@
 #include <QObject>
 #include <QPointF>
 #include <QList>
-#include <QMultiHash>
 #include <QColor>
 #include <QVector>
-#include <random>
-#include "laboratory.h"
+#include <atomic>
 #include "common.h"
 
 class Animal;
@@ -43,6 +41,7 @@ public:
     ~Species();
 
     static bool load(const QString & filename, Species & species);
+    static Species * plantSpecies();
 
     void clear();
     void initialize(int numAnimals, int maxAnimals, int initialEnergy);
@@ -62,32 +61,29 @@ public:
 
     bool canSpawn() const;
 
-    double eatWeakestPlant(const QPointF & pos, Animal *& weakestPlant);
-    double killWeakestEnemy(const QPointF &pos, Animal *&weakestAnimal);
+    double eatWeakestPlant(int cellX, int cellY);
+    double killWeakestEnemy(int cellX, int cellY);
 
-    int friendCount(QPointF pos) const;
-    int enemyCount(QPointF pos) const;
-    int plantCount(QPointF pos) const;
-    QVector<Animal *> friends(QPointF pos) const;
-    QVector<Animal*> enemies(QPointF pos) const;
-    QVector<Animal *> plants(QPointF pos) const;
+    int friendCount(int cellX, int cellY) const;
+    int enemyCount(int cellX, int cellY) const;
+    int plantCount(int cellX, int cellY) const;
+    Animal *firstNeighbor(int cellX, int cellY) const;
+    void advanceCombatCycle();
 
     double energyLevel(QPointF pos) const;
     double energyLevel(int x, int y) const;
     double threatLevel(QPointF pos) const;
 
-    void removeAnimal(QPointF pos, Animal * animal);
-    void addAnimal(QPointF pos, Animal * animal);
-
-    void moveAnimal(QPointF oldPos, QPointF newPos, Animal * animal);
-    void killAnimal(QPointF pos, Animal * animal);
+    void addAnimal(int cellX, int cellY, Animal * animal);
+    void moveAnimal(int oldX, int oldY, int newX, int newY, Animal * animal);
+    void killAnimal(int cellX, int cellY, Animal * animal);
     void spawnAnimal(QPointF pos, double startingEnergy, int spawningEnergy, int metabolism, const Movements & movements, const QPointF & direction, const Animal *parent);
 
     void setColor(QColor color);
     QColor color() const;
 
-    QList<Animal*> & animals();
-    const QList<Animal*> & animals() const;
+    QVector<Animal*> & animals();
+    const QVector<Animal*> & animals() const;
 
     void save(const QString & filename);
 
@@ -96,6 +92,34 @@ public:
     SpeciesType type() const;
 
     QString statistics() const;
+
+    template<typename Fn>
+    void forEachNeighborCell(int cellX, int cellY, Fn && fn) const
+    {
+        int yMinus = cellY - 1;
+        int y = cellY;
+        int yPlus = cellY + 1;
+        int xMinus = cellX - 1;
+        int x = cellX;
+        int xPlus = cellX + 1;
+
+        wrapLabHeight(yMinus);
+        wrapLabHeight(y);
+        wrapLabHeight(yPlus);
+        wrapLabWidth(xMinus);
+        wrapLabWidth(x);
+        wrapLabWidth(xPlus);
+
+        fn(xMinus, yMinus);
+        fn(x, yMinus);
+        fn(xPlus, yMinus);
+        fn(xMinus, y);
+        fn(x, y);
+        fn(xPlus, y);
+        fn(xMinus, yPlus);
+        fn(x, yPlus);
+        fn(xPlus, yPlus);
+    }
 
 public slots:
     void setName(const QString & name);
@@ -111,32 +135,34 @@ signals:
     void nameChanged(QString name);
 
 private:
-    void wrapHeight(int & y) const;
-    void wrapWidth(int & x) const;
+    void rebuildCaches();
+    void removeAnimal(int cellX, int cellY, Animal * animal);
+    void removeFromCell(int cellX, int cellY, Animal * animal);
+    Animal *weakestInNeighborhood(int cellX, int cellY) const;
+    bool tryClaimCombatCell(int cellX, int cellY);
+    const QVector<Animal*> *occupants(int cellX, int cellY) const;
+    QVector<Animal*> *occupants(int cellX, int cellY);
 
 private:
     static const uint SPECIES_MAGIC_NUMBER = 0x0E7017E0;
     static const uint SPECIES_VERSION_NUMBER = 1;
 
 private:
-    std::random_device mRd;  //Will be used to obtain a seed for the random number engine
-    std::mt19937 mRdGen; //Standard mersenne_twister_engine seeded with rd()
     SpeciesUserData mUserData;
 
     int mMaximumAnimals;
     int mSpeciesIndex;
     SpeciesType mType;
 
-
-    //Hash keyed on: top 16 bits Y, bottom 16 bits X
-//    QMultiHash<int, Animal *> mAnimals;
-//    QHash<int, int> mFriendCounts;
     static QList<Species*> mSpeciesList;
+    static Species *mPlantSpecies;
+    QVector<Species*> mEnemySpecies;
+    int mCombatCycle = 0;
+    std::atomic<int> mCellCombatCycle[LABORATORY_HEIGHT][LABORATORY_WIDTH]{};
     int mFriendCounts[LABORATORY_HEIGHT][LABORATORY_WIDTH]{};
-    QVector<Animal *> mFriends[LABORATORY_HEIGHT][LABORATORY_WIDTH];
-    QList<Animal *> mInactiveAnimals;
-    QList<Animal *> mAnimals;
-
+    QVector<Animal *> mOccupants[LABORATORY_HEIGHT][LABORATORY_WIDTH];
+    QVector<Animal *> mInactiveAnimals;
+    QVector<Animal *> mAnimals;
 };
 
 #endif // SPECIES_H

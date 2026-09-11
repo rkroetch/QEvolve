@@ -4,6 +4,75 @@
 #include <QPointF>
 #include <QDebug>
 #include <string.h>
+#include <random>
+
+constexpr int LABORATORY_WIDTH = 360;
+constexpr int LABORATORY_HEIGHT = 360;
+constexpr int MAX_NUM_PLANTS = 2000;
+constexpr int PLANT_INITIAL_ENERGY = 500;
+constexpr int PLANT_SPAWN_ENERGY = 1000;
+
+inline void wrapLabWidth(int &x)
+{
+    if (x > LABORATORY_WIDTH - 1)
+    {
+        x = 1;
+    }
+    else if (x < 1)
+    {
+        x = LABORATORY_WIDTH - 1;
+    }
+}
+
+inline void wrapLabHeight(int &y)
+{
+    if (y > LABORATORY_HEIGHT - 1)
+    {
+        y = 1;
+    }
+    else if (y < 1)
+    {
+        y = LABORATORY_HEIGHT - 1;
+    }
+}
+
+inline int clampCellX(int x)
+{
+    if (x < 0)
+    {
+        return 0;
+    }
+    if (x > LABORATORY_WIDTH - 1)
+    {
+        return LABORATORY_WIDTH - 1;
+    }
+    return x;
+}
+
+inline int clampCellY(int y)
+{
+    if (y < 0)
+    {
+        return 0;
+    }
+    if (y > LABORATORY_HEIGHT - 1)
+    {
+        return LABORATORY_HEIGHT - 1;
+    }
+    return y;
+}
+
+inline std::mt19937 &threadRng()
+{
+    thread_local std::mt19937 gen{std::random_device{}()};
+    return gen;
+}
+
+inline int randIntInclusive(int lo, int hi)
+{
+    std::uniform_int_distribution<int> dist(lo, hi);
+    return dist(threadRng());
+}
 
 //GENE KEY:
 //0 - up

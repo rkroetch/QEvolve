@@ -4,22 +4,23 @@
 #include <QFile>
 #include <QDataStream>
 #include <QFileInfo>
+#include <QTextStream>
 
 #include <QImage>
 #include <QPainter>
+#include <cstring>
 #include <utility>
 
 QList<Species *> Species::mSpeciesList;// List Definition
+Species * Species::mPlantSpecies = nullptr;
 
 Species::Species(SpeciesType type, QObject * parent) : QObject(parent),
-    mRdGen(mRd()),
     mType(type)
 {
     mSpeciesList.append(this);
     mSpeciesIndex = mSpeciesList.size() - 1;
     mMaximumAnimals = 250;
-
-    memset(reinterpret_cast<int*>(mFriendCounts), 0, LABORATORY_HEIGHT * LABORATORY_WIDTH);
+    rebuildCaches();
 }
 
 Species::~Species()
@@ -33,6 +34,39 @@ Species::~Species()
     for (qsizetype i = index; i < mSpeciesList.size(); ++i) {
         mSpeciesList[i]->mSpeciesIndex = static_cast<int>(i);
     }
+    rebuildCaches();
+}
+
+Species * Species::plantSpecies()
+{
+    return mPlantSpecies;
+}
+
+void Species::rebuildCaches()
+{
+    mPlantSpecies = nullptr;
+    for (Species * species : mSpeciesList)
+    {
+        species->mEnemySpecies.clear();
+        if (species->type() == typePlant)
+        {
+            mPlantSpecies = species;
+        }
+    }
+    for (Species * species : mSpeciesList)
+    {
+        if (species->type() != typeAnimal)
+        {
+            continue;
+        }
+        for (Species * other : mSpeciesList)
+        {
+            if (other != species && other->type() == typeAnimal)
+            {
+                species->mEnemySpecies.append(other);
+            }
+        }
+    }
 }
 
 void Species::initialize(int numAnimals, int maxAnimals, int initialEnergy)
@@ -43,27 +77,18 @@ void Species::initialize(int numAnimals, int maxAnimals, int initialEnergy)
         numAnimals = maxAnimals;
     }
 
-    std::uniform_int_distribution<> randXPos(5, LABORATORY_WIDTH - 5);
-    std::uniform_int_distribution<> randYPos(5, LABORATORY_HEIGHT - 5);
     {
-        int x = randXPos(mRdGen);
-        int y = randYPos(mRdGen);
+        const int x = randIntInclusive(5, LABORATORY_WIDTH - 5);
+        const int y = randIntInclusive(5, LABORATORY_HEIGHT - 5);
         QPointF pos(x, y);
         auto * animal = new Animal(pos, this, initialEnergy, mUserData.mSpawningEnergy, mUserData.mMetabolism, mUserData.mMovements);
-        if ( animal )
-        {
-            addAnimal(pos, animal);
-        }
-        else
-        {
-            qWarning() << "Failed to create animal!";
-        }
+        addAnimal(animal->cellX(), animal->cellY(), animal);
     }
 
+    mInactiveAnimals.reserve(maxAnimals - numAnimals);
     for ( int index = 0; index < (maxAnimals - numAnimals); ++index )
     {
-        auto * animal = new Animal();
-        mInactiveAnimals.append(animal);
+        mInactiveAnimals.append(new Animal());
     }
 }
 
@@ -74,24 +99,11 @@ void Species::respawn(int numAnimals, int initialEnergy)
         return;
     }
 
-    int numToSpawn = qMin(numAnimals, mInactiveAnimals.size() );
-
-    //Single Square
-//    std::uniform_int_distribution<> randXPos(((LABORATORY_WIDTH / 2)), ((LABORATORY_WIDTH / 4) + (LABORATORY_WIDTH / 2)));
-//    std::uniform_int_distribution<> randYPos(((LABORATORY_HEIGHT / 2)), ((LABORATORY_HEIGHT / 4) + (LABORATORY_HEIGHT / 2)));
-//    for ( int index = 0; index < numToSpawn; ++index )
-//    {
-//        int x = randXPos(mRdGen);
-//        int y = randYPos(mRdGen);
-//        spawnAnimal(QPointF(x, y), initialEnergy, spawningEnergy(), metabolism(), movements(), QPointF(0,0), nullptr);
-//    }
-
-    std::uniform_int_distribution<> randXPos(0, LABORATORY_WIDTH);
-    std::uniform_int_distribution<> randYPos(0, LABORATORY_HEIGHT);
+    const int numToSpawn = qMin(numAnimals, int(mInactiveAnimals.size()));
     for ( int index = 0; index < numToSpawn; ++index )
     {
-        int x = randXPos(mRdGen);
-        int y = randYPos(mRdGen);
+        const int x = randIntInclusive(0, LABORATORY_WIDTH - 1);
+        const int y = randIntInclusive(0, LABORATORY_HEIGHT - 1);
         spawnAnimal(QPointF(x, y), initialEnergy, spawningEnergy(), metabolism(), movements(), QPointF(0,0), nullptr);
     }
 }
@@ -164,10 +176,10 @@ void Species::clear()
     {
         for ( int x = 0; x < LABORATORY_WIDTH; ++x )
         {
-            mFriends[y][x].clear();
-            mFriendCounts[y][x] = 0;
+            mOccupants[y][x].clear();
         }
     }
+    memset(mFriendCounts, 0, sizeof(mFriendCounts));
 }
 
 //ver 1.0
@@ -225,8 +237,8 @@ QPixmap Species::heatMap() const
     {
         for ( int x = 0; x < LABORATORY_WIDTH; ++x )
         {
-            int friends = friendCount(QPointF(x, y));
-            int enemies = enemyCount(QPointF(x, y));
+            int friends = friendCount(x, y);
+            int enemies = enemyCount(x, y);
 
             int friendAlpha = static_cast<int>(qMin(friends / 5.0, 1.0) * 255.0);
             int enemyAlpha = static_cast<int>(qMin(enemies / 5.0, 1.0) * 255.0);
@@ -323,204 +335,151 @@ bool Species::canSpawn() const
     return ( mAnimals.size() < mMaximumAnimals );
 }
 
-double Species::eatWeakestPlant(const QPointF & pos, Animal *& weakestPlant)
+const QVector<Animal*> *Species::occupants(int cellX, int cellY) const
 {
-    double energy = 0;
-
-    weakestPlant = nullptr;
-    foreach ( Animal * plant, plants(pos) )
-    {
-        if ( !weakestPlant )
-        {
-            weakestPlant = plant;
-        }
-        else if ( weakestPlant->energy() > plant->energy() )
-        {
-            weakestPlant = plant;
-        }
-    }
-
-    //    Die
-    if ( weakestPlant )
-    {
-        energy = weakestPlant->energy();
-        weakestPlant->markAsEaten();
-    }
-
-    return energy;
+    return &mOccupants[cellY][cellX];
 }
 
-double Species::killWeakestEnemy(const QPointF & pos, Animal *& weakestAnimal)
+QVector<Animal*> *Species::occupants(int cellX, int cellY)
 {
-    double energy = 0;
+    return &mOccupants[cellY][cellX];
+}
 
-    weakestAnimal = nullptr;
-    foreach ( Animal * animal, enemies(pos) )
+Animal *Species::weakestInNeighborhood(int cellX, int cellY) const
+{
+    Animal * weakest = nullptr;
+    forEachNeighborCell(cellX, cellY, [this, &weakest](int x, int y) {
+        const QVector<Animal*> * cell = occupants(x, y);
+        if (!cell)
+        {
+            return;
+        }
+        for (Animal * animal : *cell)
+        {
+            if (!animal || animal->isEaten())
+            {
+                continue;
+            }
+            if (!weakest || weakest->energy() > animal->energy())
+            {
+                weakest = animal;
+            }
+        }
+    });
+    return weakest;
+}
+
+void Species::advanceCombatCycle()
+{
+    ++mCombatCycle;
+}
+
+bool Species::tryClaimCombatCell(int cellX, int cellY)
+{
+    int observed = mCellCombatCycle[cellY][cellX].load(std::memory_order_relaxed);
+    while (observed != mCombatCycle)
     {
-        if ( animal->species()->type() == Species::typePlant )
+        if (mCellCombatCycle[cellY][cellX].compare_exchange_weak(observed, mCombatCycle, std::memory_order_relaxed))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+double Species::eatWeakestPlant(int cellX, int cellY)
+{
+    Species * plants = mPlantSpecies;
+    if (!plants)
+    {
+        return 0;
+    }
+    Animal * weakestPlant = plants->weakestInNeighborhood(cellX, cellY);
+    if (!weakestPlant)
+    {
+        return 0;
+    }
+    if (!plants->tryClaimCombatCell(weakestPlant->cellX(), weakestPlant->cellY()))
+    {
+        return 0;
+    }
+    if (!weakestPlant->tryClaimEaten())
+    {
+        return 0;
+    }
+    return weakestPlant->energy();
+}
+
+double Species::killWeakestEnemy(int cellX, int cellY)
+{
+    Animal * weakestAnimal = nullptr;
+    for (Species * species : mEnemySpecies)
+    {
+        Animal * candidate = species->weakestInNeighborhood(cellX, cellY);
+        if (!candidate)
         {
             continue;
         }
-        if ( !weakestAnimal )
+        if (!weakestAnimal || weakestAnimal->energy() > candidate->energy())
         {
-            weakestAnimal = animal;
-        }
-        else if ( weakestAnimal->energy() > animal->energy() )
-        {
-            weakestAnimal = animal;
+            weakestAnimal = candidate;
         }
     }
-
-
-//    foreach ( Animal * animal, friends(pos) )
-//    {
-//        if ( animal->species()->type() == Species::typePlant )
-//        {
-//            continue;
-//        }
-//        if ( !weakestAnimal )
-//        {
-//            weakestAnimal = animal;
-//        }
-//        else if ( weakestAnimal->energy() > animal->energy() )
-//        {
-//            weakestAnimal = animal;
-//        }
-//    }
-
-    //    Die
-    if ( weakestAnimal )
+    if (!weakestAnimal)
     {
-        energy = weakestAnimal->energy();
-        weakestAnimal->markAsEaten();
+        return 0;
     }
-
-    return energy;
+    if (!weakestAnimal->species()->tryClaimCombatCell(weakestAnimal->cellX(), weakestAnimal->cellY()))
+    {
+        return 0;
+    }
+    if (!weakestAnimal->tryClaimEaten())
+    {
+        return 0;
+    }
+    return weakestAnimal->energy();
 }
 
-int Species::friendCount(QPointF pos) const
-{
-    int yMinus = pos.y() - 1;
-    int y = pos.y();
-    int yPlus = pos.y() + 1;
-    int xMinus = pos.x() - 1;
-    int x = pos.x();
-    int xPlus = pos.x() + 1;
-
-    wrapHeight(yMinus);
-    wrapHeight(y);
-    wrapHeight(yPlus);
-
-    wrapWidth(xMinus);
-    wrapWidth(x);
-    wrapWidth(xPlus);
-
-    return (mFriendCounts[yMinus][xMinus] +
-            mFriendCounts[yMinus][x] +
-            mFriendCounts[yMinus][xPlus] +
-            mFriendCounts[y][xMinus] +
-            mFriendCounts[y][x] +
-            mFriendCounts[y][xPlus] +
-            mFriendCounts[yPlus][xMinus] +
-            mFriendCounts[yPlus][x] +
-            mFriendCounts[yPlus][xPlus]);
-}
-
-int Species::enemyCount(QPointF pos) const
+int Species::friendCount(int cellX, int cellY) const
 {
     int count = 0;
-    for( int index = 0; index < mSpeciesList.size(); ++index )
+    forEachNeighborCell(cellX, cellY, [this, &count](int x, int y) {
+        count += mFriendCounts[y][x];
+    });
+    return count;
+}
+
+int Species::enemyCount(int cellX, int cellY) const
+{
+    int count = 0;
+    for (const Species * species : mEnemySpecies)
     {
-        if ( index != mSpeciesIndex )
-        {
-            if ( mSpeciesList.at(index)->type() == typeAnimal )
-            {
-                count += mSpeciesList.at(index)->friendCount(pos);
-            }
-        }
+        count += species->friendCount(cellX, cellY);
     }
     return count;
 }
 
-int Species::plantCount(QPointF pos) const
+int Species::plantCount(int cellX, int cellY) const
 {
-    int count = 0;
-    for( int index = 0; index < mSpeciesList.size(); ++index )
-    {
-        if ( index != mSpeciesIndex )
-        {
-            if ( mSpeciesList.at(index)->type() == typePlant )
-            {
-                count += mSpeciesList.at(index)->friendCount(pos);
-            }
-        }
-    }
-    return count;
+    return mPlantSpecies ? mPlantSpecies->friendCount(cellX, cellY) : 0;
 }
 
-QVector<Animal*> Species::friends(QPointF pos) const
+Animal *Species::firstNeighbor(int cellX, int cellY) const
 {
-    int yMinus = pos.y() - 1;
-    int y = pos.y();
-    int yPlus = pos.y() + 1;
-    int xMinus = pos.x() - 1;
-    int x = pos.x();
-    int xPlus = pos.x() + 1;
-
-    wrapHeight(yMinus);
-    wrapHeight(y);
-    wrapHeight(yPlus);
-
-    wrapWidth(xMinus);
-    wrapWidth(x);
-    wrapWidth(xPlus);
-
-    QVector<Animal *> localAnimals;
-    localAnimals << mFriends[yMinus][xMinus];
-    localAnimals << mFriends[yMinus][x];
-    localAnimals << mFriends[yMinus][xPlus];
-    localAnimals << mFriends[y][xMinus];
-    localAnimals << mFriends[y][x];
-    localAnimals << mFriends[y][xPlus];
-    localAnimals << mFriends[yPlus][xMinus];
-    localAnimals << mFriends[yPlus][x];
-    localAnimals << mFriends[yPlus][xPlus];
-    return localAnimals;
-
-}
-
-QVector<Animal *> Species::enemies(QPointF pos) const
-{
-    QVector<Animal*> animals;
-    for( int index = 0; index < mSpeciesList.size(); ++index )
-    {
-        if ( index != mSpeciesIndex )
+    Animal * found = nullptr;
+    forEachNeighborCell(cellX, cellY, [this, &found](int x, int y) {
+        if (found)
         {
-            const Species  * species = mSpeciesList.at(index);
-            if ( species->type() == typeAnimal )
-            {
-                animals += species->friends(pos);
-            }
+            return;
         }
-    }
-    return animals;
-}
-
-QVector<Animal *> Species::plants(QPointF pos) const
-{
-    QVector<Animal*> animals;
-    for( int index = 0; index < mSpeciesList.size(); ++index )
-    {
-        if ( index != mSpeciesIndex )
+        const QVector<Animal*> * cell = occupants(x, y);
+        if (!cell || cell->isEmpty())
         {
-            const Species  * species = mSpeciesList.at(index);
-            if ( species->type() == typePlant )
-            {
-                animals += species->friends(pos);
-            }
+            return;
         }
-    }
-    return animals;
+        found = cell->first();
+    });
+    return found;
 }
 
 double Species::energyLevel(QPointF pos) const
@@ -530,8 +489,13 @@ double Species::energyLevel(QPointF pos) const
 
 double Species::energyLevel(int x, int y) const
 {
+    const QVector<Animal*> * cell = occupants(x, y);
+    if (!cell)
+    {
+        return 0;
+    }
     double energy = 0;
-    foreach ( const Animal * animal, mFriends[y][x] )
+    for (const Animal * animal : *cell)
     {
         energy += animal->energy();
     }
@@ -540,96 +504,122 @@ double Species::energyLevel(int x, int y) const
 
 double Species::threatLevel(QPointF pos) const
 {
-    const int & x = pos.x();
-    const int & y = pos.y();
+    const int x = int(pos.x());
+    const int y = int(pos.y());
 
     double threat = 0;
-    for( int index = 0; index < mSpeciesList.size(); ++index )
+    for (const Species * species : mEnemySpecies)
     {
-        if ( index != mSpeciesIndex )
-        {
-            if ( mSpeciesList.at(index)->type() == typeAnimal )
-            {
-                threat += mSpeciesList.at(index)->energyLevel(x,y);
-            }
-        }
+        threat += species->energyLevel(x, y);
     }
     return threat;
 }
 
-void Species::removeAnimal(QPointF pos, Animal * animal)
+void Species::removeFromCell(int cellX, int cellY, Animal * animal)
 {
-    const int & x = pos.x();
-    const int & y = pos.y();
-
-    if ( !mFriends[y][x].removeOne(animal) )
+    QVector<Animal*> & cell = mOccupants[cellY][cellX];
+    const int slot = animal->cellSlot();
+    const int last = int(cell.size()) - 1;
+    if (slot < 0 || slot > last || cell.at(slot) != animal)
     {
-        qCritical() << "Tried to remove animal:" << animal << ". This animal doesn't exist here.";
+        const qsizetype index = cell.indexOf(animal);
+        if (index < 0)
+        {
+            return;
+        }
+        animal->setCellSlot(int(index));
+        removeFromCell(cellX, cellY, animal);
+        return;
     }
-    mFriendCounts[y][x]--;
-    mAnimals.removeOne(animal);
+    if (slot != last)
+    {
+        cell[slot] = cell[last];
+        cell[slot]->setCellSlot(slot);
+    }
+    cell.removeLast();
+    mFriendCounts[cellY][cellX]--;
 }
 
-void Species::addAnimal(QPointF pos, Animal * animal)
+void Species::removeAnimal(int cellX, int cellY, Animal * animal)
 {
-    const int & x = pos.x();
-    const int & y = pos.y();
-    mFriends[y][x].append(animal);
-    mFriendCounts[y][x]++;
+    removeFromCell(cellX, cellY, animal);
+    const int index = animal->listIndex();
+    const int last = int(mAnimals.size()) - 1;
+    if (index >= 0 && index <= last && mAnimals.at(index) == animal)
+    {
+        if (index != last)
+        {
+            mAnimals[index] = mAnimals[last];
+            mAnimals[index]->setListIndex(index);
+        }
+        mAnimals.removeLast();
+    }
+    else
+    {
+        mAnimals.removeAll(animal);
+    }
+    animal->setListIndex(-1);
+    animal->setCellSlot(-1);
+}
+
+void Species::addAnimal(int cellX, int cellY, Animal * animal)
+{
+    QVector<Animal*> & cell = mOccupants[cellY][cellX];
+    animal->setCellSlot(int(cell.size()));
+    cell.append(animal);
+    mFriendCounts[cellY][cellX]++;
+    animal->setListIndex(int(mAnimals.size()));
     mAnimals.append(animal);
 }
 
-void Species::moveAnimal(QPointF oldPos, QPointF newPos, Animal * animal)
+void Species::moveAnimal(int oldX, int oldY, int newX, int newY, Animal * animal)
 {
-    const int & oldX = oldPos.x();
-    const int & oldY = oldPos.y();
-    if ( !mFriends[oldY][oldX].removeOne(animal) )
+    if (oldX == newX && oldY == newY)
     {
-        qCritical() << "Tried to move animal:" << animal << ". This animal doesn't exist here.";
+        return;
     }
-    mFriendCounts[oldY][oldX]--;
-
-    const int & newX = newPos.x();
-    const int & newY = newPos.y();
-    mFriends[newY][newX].append(animal);
+    removeFromCell(oldX, oldY, animal);
+    QVector<Animal*> & cell = mOccupants[newY][newX];
+    animal->setCellSlot(int(cell.size()));
+    cell.append(animal);
     mFriendCounts[newY][newX]++;
 }
 
-void Species::killAnimal(QPointF pos, Animal * animal)
+void Species::killAnimal(int cellX, int cellY, Animal * animal)
 {
-    removeAnimal(pos, animal);
+    removeAnimal(cellX, cellY, animal);
     mInactiveAnimals.append(animal);
 }
 
 void Species::spawnAnimal(QPointF pos, double startingEnergy, int spawningEnergy, int metabolism, const Movements & movements, const QPointF & direction, const Animal * parent)
 {
-    std::uniform_int_distribution<> randPosOffset(-4, 4);
-    if ( !mInactiveAnimals.isEmpty() )
+    if ( mInactiveAnimals.isEmpty() )
     {
-        Animal * animal = mInactiveAnimals.takeLast();
-
-        QPointF newPos(pos.x() + randPosOffset(mRdGen), pos.y() + randPosOffset(mRdGen));
-
-        if ( newPos.x() > LABORATORY_WIDTH - 1  )
-        {
-            newPos.setX(1);
-        }
-        else if ( newPos.x() < 1 )
-        {
-            newPos.setX( LABORATORY_WIDTH - 1 );
-        }
-        if ( newPos.y() > LABORATORY_HEIGHT - 1)
-        {
-            newPos.setY(1);
-        }
-        else if ( newPos.y() < 1 )
-        {
-            newPos.setY( LABORATORY_HEIGHT - 1 );
-        }
-
-        animal->initialize(newPos, this, startingEnergy, spawningEnergy, metabolism, movements, direction, parent);
-        addAnimal(newPos, animal);
+        return;
     }
+    Animal * animal = mInactiveAnimals.takeLast();
+
+    QPointF newPos(pos.x() + randIntInclusive(-4, 4), pos.y() + randIntInclusive(-4, 4));
+
+    if ( newPos.x() > LABORATORY_WIDTH - 1  )
+    {
+        newPos.setX(1);
+    }
+    else if ( newPos.x() < 1 )
+    {
+        newPos.setX( LABORATORY_WIDTH - 1 );
+    }
+    if ( newPos.y() > LABORATORY_HEIGHT - 1)
+    {
+        newPos.setY(1);
+    }
+    else if ( newPos.y() < 1 )
+    {
+        newPos.setY( LABORATORY_HEIGHT - 1 );
+    }
+
+    animal->initialize(newPos, this, startingEnergy, spawningEnergy, metabolism, movements, direction, parent);
+    addAnimal(animal->cellX(), animal->cellY(), animal);
 }
 
 void Species::setColor(QColor color)
@@ -643,38 +633,14 @@ QColor Species::color() const
     return mUserData.mColor;
 }
 
-QList<Animal*> & Species::animals()
+QVector<Animal*> & Species::animals()
 {
     return mAnimals;
 }
 
-const QList<Animal*> & Species::animals() const
+const QVector<Animal*> & Species::animals() const
 {
     return mAnimals;
-}
-
-void Species::wrapHeight(int & y) const
-{
-    if ( y > LABORATORY_HEIGHT - 1)
-    {
-        y = 1;
-    }
-    else if ( y < 1 )
-    {
-        y = LABORATORY_HEIGHT - 1;
-    }
-}
-
-void Species::wrapWidth(int & x) const
-{
-    if ( x > LABORATORY_WIDTH - 1  )
-    {
-        x = 1;
-    }
-    else if ( x < 1 )
-    {
-        x = LABORATORY_WIDTH - 1;
-    }
 }
 
 Species::SpeciesType Species::type() const
