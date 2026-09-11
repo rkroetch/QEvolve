@@ -12,6 +12,13 @@ constexpr int MAX_NUM_PLANTS = 2000;
 constexpr int PLANT_INITIAL_ENERGY = 500;
 constexpr int PLANT_SPAWN_ENERGY = 1000;
 
+enum PlantPattern
+{
+    plantPatternOneGroup,
+    plantPatternTwoGroups,
+    plantPatternRandom
+};
+
 inline void wrapLabWidth(int &x)
 {
     if (x > LABORATORY_WIDTH - 1)
@@ -72,6 +79,40 @@ inline int randIntInclusive(int lo, int hi)
 {
     std::uniform_int_distribution<int> dist(lo, hi);
     return dist(threadRng());
+}
+
+// Picks a spawn position for a new plant according to the given pattern.
+// "One group" clusters plants in a single region near the center; "two
+// groups" clusters them into two separate regions (left/right); "random"
+// scatters them across the whole map.
+inline QPointF randomPlantPosition(PlantPattern pattern)
+{
+    switch (pattern)
+    {
+    case plantPatternOneGroup:
+    {
+        constexpr int groupWidth = LABORATORY_WIDTH / 3;
+        constexpr int groupHeight = LABORATORY_HEIGHT / 3;
+        constexpr int left = (LABORATORY_WIDTH - groupWidth) / 2;
+        constexpr int top = (LABORATORY_HEIGHT - groupHeight) / 2;
+        return QPointF(randIntInclusive(left, left + groupWidth - 1),
+                        randIntInclusive(top, top + groupHeight - 1));
+    }
+    case plantPatternTwoGroups:
+    {
+        constexpr int groupWidth = LABORATORY_WIDTH / 4;
+        constexpr int groupHeight = LABORATORY_HEIGHT / 4;
+        constexpr int top = (LABORATORY_HEIGHT - groupHeight) / 2;
+        constexpr int leftGroupLeft = LABORATORY_WIDTH / 4 - groupWidth / 2;
+        constexpr int rightGroupLeft = (3 * LABORATORY_WIDTH) / 4 - groupWidth / 2;
+        const int groupLeft = (randIntInclusive(0, 1) == 0) ? leftGroupLeft : rightGroupLeft;
+        return QPointF(randIntInclusive(groupLeft, groupLeft + groupWidth - 1),
+                        randIntInclusive(top, top + groupHeight - 1));
+    }
+    case plantPatternRandom:
+    default:
+        return QPointF(randIntInclusive(0, LABORATORY_WIDTH - 1), randIntInclusive(0, LABORATORY_HEIGHT - 1));
+    }
 }
 
 //GENE KEY:

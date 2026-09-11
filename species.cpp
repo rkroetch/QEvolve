@@ -102,9 +102,8 @@ void Species::respawn(int numAnimals, int initialEnergy)
     const int numToSpawn = qMin(numAnimals, int(mInactiveAnimals.size()));
     for ( int index = 0; index < numToSpawn; ++index )
     {
-        const int x = randIntInclusive(0, LABORATORY_WIDTH - 1);
-        const int y = randIntInclusive(0, LABORATORY_HEIGHT - 1);
-        spawnAnimal(QPointF(x, y), initialEnergy, spawningEnergy(), metabolism(), movements(), QPointF(0,0), nullptr);
+        const QPointF pos = randomPlantPosition(mPlantPattern);
+        spawnAnimal(pos, initialEnergy, spawningEnergy(), metabolism(), movements(), QPointF(0,0), nullptr);
     }
 }
 
@@ -119,7 +118,11 @@ void Species::respawn(int numAnimals, int initialEnergy)
 bool Species::load(const QString &filename, Species & species)
 {
     QFile file(filename);
-    file.open(QIODevice::ReadOnly);
+    if (!file.open(QIODevice::ReadOnly))
+    {
+        qWarning() << "Species" << filename << "failed to load." << "Could not open file.";
+        return false;
+    }
 
     QString speciesString = file.readAll();
     QStringList lines = speciesString.split("\r\n", Qt::SkipEmptyParts);
@@ -194,7 +197,11 @@ void Species::clear()
 void Species::save(const QString &filename)
 {
     QFile file(filename);
-    file.open(QIODevice::WriteOnly | QIODevice::Truncate);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
+    {
+        qWarning() << "Species" << filename << "failed to save." << "Could not open file.";
+        return;
+    }
 
     QString fileFormat(
                 "ver 1.0\r\n"

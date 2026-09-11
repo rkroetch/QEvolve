@@ -47,6 +47,9 @@ public:
     void initialize(int numAnimals, int maxAnimals, int initialEnergy);
     void respawn(int numAnimals, int initialEnergy);
 
+    void setPlantPattern(PlantPattern pattern) { mPlantPattern = pattern; }
+    PlantPattern plantPattern() const { return mPlantPattern; }
+
     QString name() const;
 
     void toggleMovement(int friends, int enemies);
@@ -153,6 +156,7 @@ private:
     int mMaximumAnimals;
     int mSpeciesIndex;
     SpeciesType mType;
+    PlantPattern mPlantPattern = plantPatternOneGroup;
 
     static QList<Species*> mSpeciesList;
     static Species *mPlantSpecies;

@@ -19,13 +19,6 @@
 #include <gl/GL.h>
 #include "common.h"
 
-enum PlantPattern
-{
-    plantPatternOneGroup,
-    plantPatternTwoGroups,
-    plantPatternRandom
-};
-
 class Animal;
 class Species;
 class CalculationThread;

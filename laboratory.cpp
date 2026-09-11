@@ -86,6 +86,7 @@ Laboratory::Laboratory(QWidget *parent) :
     plants->setMovement(0, 2, MoveStop);
     plants->setMovement(1, 2, MoveStop);
     plants->setMovement(2, 2, MoveStop);
+    plants->setPlantPattern(mSettings.plantPattern);
     mSpecies.append(plants);
 
     mCalculationThread = new CalculationThread(this);
@@ -222,6 +223,10 @@ void Laboratory::setPlantPattern(int pattern)
     if (pattern != mSettings.plantPattern)
     {
         mSettings.plantPattern = (PlantPattern)pattern;
+        if (Species * plants = Species::plantSpecies())
+        {
+            plants->setPlantPattern(mSettings.plantPattern);
+        }
         emit plantPatternChanged((PlantPattern)pattern);
         QSettings settings("ryank", "Evolve", this);
         settings.setValue("Plants.Pattern", (PlantPattern)pattern);
