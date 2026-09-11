@@ -29,6 +29,7 @@ qt_standard_project_setup()
 qt_add_executable(QEvolve WIN32 MACOSX_BUNDLE
     animal.cpp animal.h
     common.h
+    deatheffects.cpp deatheffects.h
     delay.h
     editspeciesdialog.cpp editspeciesdialog.h editspeciesdialog.ui
     laboratory.cpp laboratory.h laboratory.ui
@@ -97,6 +98,7 @@ if(QEVOLVE_BUILD_BENCHMARKS)
     add_executable(QEvolveBenchmarks
         animal.cpp animal.h
         common.h
+        deatheffects.cpp deatheffects.h
         species.cpp species.h
         benchmarks/species_benchmark.cpp
     )

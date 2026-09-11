@@ -3,6 +3,7 @@
 #include "animal.h"
 #include "species.h"
 #include "delay.h"
+#include "deatheffects.h"
 
 #include <gl/GLU.h>
 #include <gl/GL.h>
@@ -25,6 +26,8 @@
 #include <QThreadPool>
 #include <QMutexLocker>
 #include <QPair>
+#include <QtMath>
+#include <algorithm>
 
 #include "cycleconcurrent.h"
 
@@ -49,6 +52,10 @@ namespace ActiveConcurrent = QtConcurrent;
 #endif
 
 QReadWriteLock positionLock;
+
+// Timing/shape of the death-effect "asterisk" burst drawn in paintGL().
+constexpr qint64 kDeathEffectDurationMs = 450;
+constexpr int kDeathEffectRayCount = 8;
 
 Laboratory::Laboratory(QWidget *parent) :
     QOpenGLWidget(parent),
@@ -83,6 +90,7 @@ Laboratory::Laboratory(QWidget *parent) :
 
     mCalculationThread = new CalculationThread(this);
 
+    mEffectsTimer.start();
     initActors();
 
     mAdvanceTimer.setInterval(20);
@@ -154,10 +162,21 @@ void Laboratory::captureFrame()
         }
     }
 
+    const QVector<DeathEvent> deaths = DeathEffects::takeAll();
+
     QMutexLocker locker(&mPaintMutex);
     mPaintSnapshot.swap(quads);
     mCachedStatistics = stats;
     mCachedNumAnimals.storeRelaxed(numAnimals);
+
+    if (!deaths.isEmpty())
+    {
+        const qint64 now = mEffectsTimer.elapsed();
+        for (const DeathEvent & death : deaths)
+        {
+            mDeathEffects.append({death.pos, death.color, now});
+        }
+    }
 }
 
 double Laboratory::cyclesPerSecond()
@@ -244,9 +263,46 @@ void Laboratory::paintGL()
     glTranslatef(0.375, 0.375, 0);
 
     QVector<PaintQuad> quads;
+    QVector<DeathEffectAnim> effects;
     {
         QMutexLocker locker(&mPaintMutex);
         quads = mPaintSnapshot;
+
+        const qint64 now = mEffectsTimer.elapsed();
+        mDeathEffects.erase(std::remove_if(mDeathEffects.begin(), mDeathEffects.end(),
+            [now](const DeathEffectAnim & effect) { return now - effect.spawnMs > kDeathEffectDurationMs; }),
+            mDeathEffects.end());
+        effects = mDeathEffects;
+    }
+
+    if (!effects.isEmpty())
+    {
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glLineWidth(1.5f);
+        const qint64 now = mEffectsTimer.elapsed();
+        for (const DeathEffectAnim & effect : qAsConst(effects))
+        {
+            const float t = qBound(0.0f, float(now - effect.spawnMs) / float(kDeathEffectDurationMs), 1.0f);
+            const float ease = 1.0f - (1.0f - t) * (1.0f - t);
+            const float outerR = 1.0f + ease * 5.0f;
+            const float innerR = qMax(0.0f, outerR - 2.5f);
+            const float alpha = 1.0f - t;
+
+            glBegin(GL_LINES);
+            glColor4f(float(effect.color.redF()), float(effect.color.greenF()), float(effect.color.blueF()), alpha);
+            for (int i = 0; i < kDeathEffectRayCount; ++i)
+            {
+                const float angle = (2.0f * float(M_PI) * i) / kDeathEffectRayCount;
+                const float c = qCos(angle);
+                const float s = qSin(angle);
+                glVertex2f(float(effect.pos.x()) + c * innerR, float(effect.pos.y()) + s * innerR);
+                glVertex2f(float(effect.pos.x()) + c * outerR, float(effect.pos.y()) + s * outerR);
+            }
+            glEnd();
+        }
+        glLineWidth(1.0f);
+        glDisable(GL_BLEND);
     }
 
     if (quads.isEmpty())

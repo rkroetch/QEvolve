@@ -3,6 +3,7 @@
 #include <memory>
 
 #include "animal.h"
+#include "deatheffects.h"
 #include "species.h"
 
 namespace {
@@ -159,4 +160,21 @@ TEST_F(AnimalTest, ExecuteMovementDoesNotReviveAlreadyEatenAnimal)
     a->executeMovement();
 
     EXPECT_EQ(mSpecies->animals().size(), 0);
+}
+
+TEST_F(AnimalTest, ExecuteMovementOnEatenAnimalRaisesDeathEffect)
+{
+    DeathEffects::takeAll(); // Drain any residue from earlier tests.
+
+    Animal * a = animal();
+    const QPointF pos = a->pos();
+    const QColor color = a->color();
+    a->markAsEaten();
+
+    a->executeMovement();
+
+    const QVector<DeathEvent> events = DeathEffects::takeAll();
+    ASSERT_EQ(events.size(), 1);
+    EXPECT_EQ(events.first().pos, pos);
+    EXPECT_EQ(events.first().color, color);
 }

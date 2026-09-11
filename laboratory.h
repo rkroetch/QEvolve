@@ -12,6 +12,7 @@
 #include <QThread>
 #include <QVector>
 #include <QAtomicInteger>
+#include <QColor>
 #include <atomic>
 #include <Windows.h>
 
@@ -36,6 +37,15 @@ struct PaintQuad
     GLfloat b = 0;
     GLfloat x = 0;
     GLfloat y = 0;
+};
+
+// A death-effect animation in flight, keyed off mEffectsTimer so it can be
+// aged/faded purely from elapsed time in paintGL().
+struct DeathEffectAnim
+{
+    QPointF pos;
+    QColor color;
+    qint64 spawnMs = 0;
 };
 
 namespace Ui {
@@ -99,6 +109,8 @@ private:
     QAtomicInteger<int> mSpeed = 0;
     mutable QMutex mPaintMutex;
     QVector<PaintQuad> mPaintSnapshot;
+    QElapsedTimer mEffectsTimer;
+    QVector<DeathEffectAnim> mDeathEffects;
     QAtomicInteger<int> mCachedNumAnimals = 0;
     QString mCachedStatistics;
 

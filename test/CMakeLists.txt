@@ -24,6 +24,7 @@ FetchContent_MakeAvailable(googletest)
 add_executable(QEvolveTests
     ${CMAKE_SOURCE_DIR}/animal.cpp ${CMAKE_SOURCE_DIR}/animal.h
     ${CMAKE_SOURCE_DIR}/common.h
+    ${CMAKE_SOURCE_DIR}/deatheffects.cpp ${CMAKE_SOURCE_DIR}/deatheffects.h
     ${CMAKE_SOURCE_DIR}/species.cpp ${CMAKE_SOURCE_DIR}/species.h
     ${CMAKE_SOURCE_DIR}/cycleconcurrent.h
     common_test.cpp

@@ -1,5 +1,6 @@
 #include "animal.h"
 #include "species.h"
+#include "deatheffects.h"
 
 Animal::Animal(QPointF pos, Species * species, double energy, int spawningEnergy, int metabolism, const Movements & movements)
 {
@@ -291,6 +292,10 @@ void Animal::markAsEaten()
 
 void Animal::killSelf()
 {
+    if ( mSpecies->type() == Species::typeAnimal )
+    {
+        DeathEffects::notify(mPos, mColor);
+    }
     mSpecies->killAnimal(mCellX, mCellY, this);
 }
 
