@@ -436,6 +436,18 @@ void Laboratory::initActors()
         }
     }
     positionLock.unlock();
+
+    // Discard any death events still in flight so a reset doesn't leave a
+    // stale burst frozen on screen: reset() stops mAdvanceTimer right before
+    // this, so whatever captureFrame() below draws is the last repaint until
+    // Start is pressed again - any not-yet-expired effect would otherwise
+    // sit there indefinitely instead of fading out.
+    DeathEffects::takeAll();
+    {
+        QMutexLocker locker(&mPaintMutex);
+        mDeathEffects.clear();
+    }
+
     captureFrame();
 }
 
