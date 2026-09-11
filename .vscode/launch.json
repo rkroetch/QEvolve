@@ -13,6 +13,24 @@
             }
         },
         {
+            "name": "Debug QEvolve (MSVC)",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${command:cmake.launchTargetPath}",
+            "args": [],
+            "cwd": "${command:cmake.launchTargetDirectory}",
+            "environment": [
+                {
+                "name": "PATH",
+                "value": "C:\\Qt\\6.11.2\\msvc2022_64\\bin;${env:PATH}",
+                },
+                {
+                    "name": "QT_PLUGIN_PATH",
+                    "value": "C:\\Qt\\6.11.2\\msvc2022_64\\plugins"
+                }
+            ]
+        },
+        {
             "name": "Debug QEvolve (LLDB)",
             "type": "lldb",
             "request": "launch",
@@ -23,6 +41,94 @@
                 "PATH": "C:\\Qt\\6.11.2\\msvc2022_64\\bin;${env:PATH}",
                 "QT_PLUGIN_PATH": "C:\\Qt\\6.11.2\\msvc2022_64\\plugins"
             }
+        },
+        {
+            "name": "Run Tests",
+            "type": "node-terminal",
+            "request": "launch",
+            "command": "& '${command:cmake.buildDirectory}/${command:cmake.buildType}/QEvolveTests.exe'",
+            "cwd": "${command:cmake.buildDirectory}/${command:cmake.buildType}",
+            "env": {
+                "PATH": "C:\\Qt\\6.11.2\\msvc2022_64\\bin;${env:PATH}",
+                "QT_PLUGIN_PATH": "C:\\Qt\\6.11.2\\msvc2022_64\\plugins"
+            },
+            "preLaunchTask": "Build Tests"
+        },
+        {
+            "name": "Debug Tests (MSVC)",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${command:cmake.buildDirectory}/${command:cmake.buildType}/QEvolveTests.exe",
+            "args": [],
+            "cwd": "${command:cmake.buildDirectory}/${command:cmake.buildType}",
+            "environment": [
+                {
+                    "name": "PATH",
+                    "value": "C:\\Qt\\6.11.2\\msvc2022_64\\bin;${env:PATH}"
+                },
+                {
+                    "name": "QT_PLUGIN_PATH",
+                    "value": "C:\\Qt\\6.11.2\\msvc2022_64\\plugins"
+                }
+            ],
+            "preLaunchTask": "Build Tests"
+        },
+        {
+            "name": "Debug Tests (LLDB)",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${command:cmake.buildDirectory}/${command:cmake.buildType}/QEvolveTests.exe",
+            "args": [],
+            "cwd": "${command:cmake.buildDirectory}/${command:cmake.buildType}",
+            "env": {
+                "PATH": "C:\\Qt\\6.11.2\\msvc2022_64\\bin;${env:PATH}",
+                "QT_PLUGIN_PATH": "C:\\Qt\\6.11.2\\msvc2022_64\\plugins"
+            },
+            "preLaunchTask": "Build Tests"
+        },
+        {
+            "name": "Run Benchmarks",
+            "type": "node-terminal",
+            "request": "launch",
+            "command": "& '${command:cmake.buildDirectory}/${command:cmake.buildType}/QEvolveBenchmarks.exe'",
+            "cwd": "${command:cmake.buildDirectory}/${command:cmake.buildType}",
+            "env": {
+                "PATH": "C:\\Qt\\6.11.2\\msvc2022_64\\bin;${env:PATH}",
+                "QT_PLUGIN_PATH": "C:\\Qt\\6.11.2\\msvc2022_64\\plugins"
+            },
+            "preLaunchTask": "Build Benchmarks"
+        },
+        {
+            "name": "Debug Benchmarks (MSVC)",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${command:cmake.buildDirectory}/${command:cmake.buildType}/QEvolveBenchmarks.exe",
+            "args": [],
+            "cwd": "${command:cmake.buildDirectory}/${command:cmake.buildType}",
+            "environment": [
+                {
+                    "name": "PATH",
+                    "value": "C:\\Qt\\6.11.2\\msvc2022_64\\bin;${env:PATH}"
+                },
+                {
+                    "name": "QT_PLUGIN_PATH",
+                    "value": "C:\\Qt\\6.11.2\\msvc2022_64\\plugins"
+                }
+            ],
+            "preLaunchTask": "Build Benchmarks"
+        },
+        {
+            "name": "Debug Benchmarks (LLDB)",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${command:cmake.buildDirectory}/${command:cmake.buildType}/QEvolveBenchmarks.exe",
+            "args": [],
+            "cwd": "${command:cmake.buildDirectory}/${command:cmake.buildType}",
+            "env": {
+                "PATH": "C:\\Qt\\6.11.2\\msvc2022_64\\bin;${env:PATH}",
+                "QT_PLUGIN_PATH": "C:\\Qt\\6.11.2\\msvc2022_64\\plugins"
+            },
+            "preLaunchTask": "Build Benchmarks"
         }
     ]
 }

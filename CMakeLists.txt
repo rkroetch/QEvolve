@@ -9,6 +9,21 @@ find_package(Qt6 REQUIRED COMPONENTS Charts Concurrent Gui OpenGL OpenGLWidgets 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Lets the Release configuration build without optimizations, e.g. to get
+# usable breakpoints/stepping while still exercising Release-only code paths
+# (NDEBUG, Qt release libs). See the windows-msvc-x64-unoptimized-release
+# preset in CMakePresets.json.
+option(QEVOLVE_UNOPTIMIZED_RELEASE
+    "Build the Release configuration without compiler optimizations"
+    OFF)
+if(QEVOLVE_UNOPTIMIZED_RELEASE)
+    if(MSVC)
+        string(APPEND CMAKE_CXX_FLAGS_RELEASE " /Od")
+    else()
+        string(APPEND CMAKE_CXX_FLAGS_RELEASE " -O0")
+    endif()
+endif()
+
 qt_standard_project_setup()
 
 qt_add_executable(QEvolve WIN32 MACOSX_BUNDLE
@@ -28,6 +43,20 @@ target_compile_definitions(QEvolve PRIVATE
     _USE_MATH_DEFINES
 )
 
+# CalculationThread::run()'s threading backend (see ActiveConcurrent in
+# laboratory.cpp / cycleconcurrent.h). Default (OFF) is QtConcurrent -
+# correct when cycles are paced. ON switches to a persistent worker-pool
+# backend that trades higher CPU utilization for substantially lower wall
+# time at speed == 0 (no delay between cycles) - see
+# benchmarks/species_benchmark.cpp's BM_LargeScaleSimulation vs
+# BM_LargeScaleSimulationPersistentPool for the measured trade-off.
+option(QEVOLVE_USE_PERSISTENT_THREAD_POOL
+    "Use the persistent worker-pool threading backend (CycleConcurrent) instead of QtConcurrent::blockingMap for CalculationThread::run()"
+    OFF)
+if(QEVOLVE_USE_PERSISTENT_THREAD_POOL)
+    target_compile_definitions(QEvolve PRIVATE QEVOLVE_USE_PERSISTENT_THREAD_POOL)
+endif()
+
 target_link_libraries(QEvolve PRIVATE
     Qt::Charts
     Qt::Concurrent
@@ -43,7 +72,7 @@ target_link_libraries(QEvolve PRIVATE
 
 include(CheckIPOSupported)
 check_ipo_supported(RESULT ipo_supported OUTPUT ipo_error)
-if(ipo_supported)
+if(ipo_supported AND NOT QEVOLVE_UNOPTIMIZED_RELEASE)
     set_property(TARGET QEvolve PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
 endif()
 
@@ -83,6 +112,17 @@ if(QEVOLVE_BUILD_BENCHMARKS)
         Qt::Gui
         benchmark::benchmark
     )
+endif()
+
+
+# Google Test unit tests for the simulation core (Movements/Animal/Species)
+# and the CycleConcurrent threading backend. On by default, so QEvolveTests
+# builds as part of ALL_BUILD like every other target; set to OFF to skip
+# fetching/building Google Test.
+option(QEVOLVE_BUILD_TESTS "Build the Google Test unit tests for QEvolve" ON)
+if(QEVOLVE_BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(test)
 endif()
 
 
@@ -133,6 +173,15 @@ qt_add_resources(QEvolve "resources1"
     FILES
         ${resources1_resource_files}
 )
+
+add_custom_command(TARGET QEvolve POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_CURRENT_SOURCE_DIR}/species"
+        "$<TARGET_FILE_DIR:QEvolve>/species"
+    COMMENT "Copying species/ to output directory"
+)
+
+install(DIRECTORY species/ DESTINATION ${CMAKE_INSTALL_BINDIR}/species)
 
 install(TARGETS QEvolve
     BUNDLE DESTINATION .

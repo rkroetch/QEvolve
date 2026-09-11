@@ -26,6 +26,28 @@
 #include <QMutexLocker>
 #include <QPair>
 
+#include "cycleconcurrent.h"
+
+// Threading backend for CalculationThread::run()'s two blockingMap() calls.
+// Default is QtConcurrent, which re-dispatches to Qt's shared global thread
+// pool on every call - the right choice when cycles are paced (speed != 0)
+// since dispatch overhead is noise next to the usleep(). Defining
+// QEVOLVE_USE_PERSISTENT_THREAD_POOL (see the QEVOLVE_USE_PERSISTENT_THREAD_POOL
+// CMake option) switches to CycleConcurrent (cycleconcurrent.h) instead: a
+// persistent worker pool kept alive for the life of the calculation thread,
+// which trades higher CPU utilization for substantially lower wall time
+// when cycles run back to back with no delay (speed == 0, the default) -
+// see cycleconcurrent.h and benchmarks/species_benchmark.cpp's
+// BM_LargeScaleSimulation vs BM_LargeScaleSimulationPersistentPool for the
+// measured trade-off. Both backends expose the same blockingMap(sequence,
+// fn) contract, so this is a namespace swap - no call site below needs to
+// change with the mode.
+#ifdef QEVOLVE_USE_PERSISTENT_THREAD_POOL
+namespace ActiveConcurrent = CycleConcurrent;
+#else
+namespace ActiveConcurrent = QtConcurrent;
+#endif
+
 QReadWriteLock positionLock;
 
 Laboratory::Laboratory(QWidget *parent) :
@@ -446,7 +468,7 @@ void CalculationThread::run()
                     ranges.append(qMakePair(mCalcAnimals.constData() + begin, end - begin));
                 }
             }
-            QtConcurrent::blockingMap(ranges, calculateRange);
+            ActiveConcurrent::blockingMap(ranges, calculateRange);
         }
 
         if ( mStop.load(std::memory_order_relaxed) )
@@ -455,7 +477,7 @@ void CalculationThread::run()
         }
 
         positionLock.lockForWrite();
-        QtConcurrent::blockingMap(mLaboratory->species(), executeSpecies);
+        ActiveConcurrent::blockingMap(mLaboratory->species(), executeSpecies);
         for (Species * species : mLaboratory->species())
         {
             species->respawn(1, 500);

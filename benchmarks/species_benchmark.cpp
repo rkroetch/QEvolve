@@ -17,6 +17,13 @@
 // BM_LargeScaleSimulation is a long-running soak test (up to 10,000 animals
 // x 10,000,000 cycles) rather than a quick benchmark - see its comment
 // below before running the full-size variant.
+//
+// BM_LargeScaleSimulationPersistentPool runs the identical workload through
+// CycleConcurrent (cycleconcurrent.h) - the persistent-worker-pool
+// threading backend laboratory.cpp's CalculationThread::run() can opt into
+// via the QEVOLVE_USE_PERSISTENT_THREAD_POOL CMake option - instead of
+// QtConcurrent::blockingMap. Compare it against BM_LargeScaleSimulation
+// directly - same Args, same population/cycle counts.
 
 #include <benchmark/benchmark.h>
 
@@ -30,6 +37,7 @@
 #include <memory>
 
 #include "animal.h"
+#include "cycleconcurrent.h"
 #include "species.h"
 
 namespace {
@@ -131,6 +139,69 @@ void calculateRange(const QPair<Animal * const *, int> & range)
     {
         ptrs[i]->calculateMovement();
     }
+}
+
+// Persistent-pool counterpart to runSimulationCycleThreaded(): identical
+// per-cycle logic and partitioning (advanceCombatCycle -> calculateMovement
+// over calculateRange() ranges -> executeMovement() one species per worker
+// -> respawn), but fanned out through CycleConcurrent::blockingMap
+// (cycleconcurrent.h) instead of QtConcurrent::blockingMap - the exact same
+// shared header laboratory.cpp's ActiveConcurrent alias uses when
+// QEVOLVE_USE_PERSISTENT_THREAD_POOL is defined, so this benchmark
+// exercises the real production code path, not a reimplementation of it.
+// See cycleconcurrent.h for why this backend exists and its measured
+// trade-off (BM_LargeScaleSimulation vs BM_LargeScaleSimulationPersistentPool
+// below are the numbers referenced there).
+qint64 runSimulationCyclePersistentPool(const QVector<Species *> & allSpecies, QVector<Animal *> & calcScratch)
+{
+    for (Species * species : allSpecies)
+    {
+        species->advanceCombatCycle();
+    }
+
+    calcScratch.clear();
+    for (Species * species : allSpecies)
+    {
+        if (species->type() == Species::typeAnimal)
+        {
+            calcScratch += species->animals();
+        }
+    }
+
+    if (!calcScratch.isEmpty())
+    {
+        const int n = int(calcScratch.size());
+        const int threadCount = qMax(1, qMin(n, CycleConcurrent::threadLocalPool().threadCount()));
+        QVector<QPair<Animal * const *, int>> ranges;
+        ranges.reserve(threadCount);
+        for (int t = 0; t < threadCount; ++t)
+        {
+            const int begin = t * n / threadCount;
+            const int end = (t + 1) * n / threadCount;
+            if (begin < end)
+            {
+                ranges.append(qMakePair(calcScratch.constData() + begin, end - begin));
+            }
+        }
+        CycleConcurrent::blockingMap(ranges, calculateRange);
+    }
+
+    QAtomicInteger<qint64> itemsProcessed{0};
+    CycleConcurrent::blockingMap(allSpecies, [&itemsProcessed](Species * species) {
+        const QVector<Animal *> snapshot = species->animals();
+        for (Animal * animal : snapshot)
+        {
+            animal->executeMovement();
+        }
+        itemsProcessed.fetchAndAddRelaxed(qint64(snapshot.size()));
+    });
+
+    for (Species * species : allSpecies)
+    {
+        species->respawn(1, PLANT_INITIAL_ENERGY);
+    }
+
+    return itemsProcessed.loadRelaxed();
 }
 
 // Threaded counterpart to runSimulationCycle(): reproduces
@@ -400,6 +471,66 @@ static void BM_LargeScaleSimulation(benchmark::State & state)
     }
 }
 BENCHMARK(BM_LargeScaleSimulation)
+    ->Args({100, 2000})
+    ->Args({10000, 100000})
+    ->Iterations(1)
+    ->Unit(benchmark::kSecond)
+    ->UseRealTime();
+
+// ---------------------------------------------------------------------------
+// Same workload and Args as BM_LargeScaleSimulation, but driven through
+// runSimulationCyclePersistentPool() (CycleConcurrent::blockingMap, see
+// cycleconcurrent.h) instead of runSimulationCycleThreaded()
+// (QtConcurrent::blockingMap), to quantify the per-cycle dispatch-overhead
+// win/CPU-time cost of the QEVOLVE_USE_PERSISTENT_THREAD_POOL backend that
+// CalculationThread::run() can opt into. Compare the two directly with:
+//   QEvolveBenchmarks.exe --benchmark_filter=BM_LargeScale.*/10000/100000
+// A smaller real-time number here than BM_LargeScaleSimulation's, for the
+// same population/cycle count, is the wall-clock win; check CPU time too -
+// see cycleconcurrent.h for the trade-off this backend makes.
+// ---------------------------------------------------------------------------
+static void BM_LargeScaleSimulationPersistentPool(benchmark::State & state)
+{
+    const int animalPopulation = static_cast<int>(state.range(0));
+    const long long numCycles = state.range(1);
+    const int perSpeciesPopulation = animalPopulation / 2;
+
+    auto plants = std::make_unique<Species>(Species::typePlant);
+    plants->initialize(0, MAX_NUM_PLANTS, PLANT_INITIAL_ENERGY);
+    scatterPopulation(plants.get(), MAX_NUM_PLANTS / 2 - 1, PLANT_INITIAL_ENERGY, PLANT_SPAWN_ENERGY, 100, Movements());
+
+    auto preyA = std::make_unique<Species>(Species::typeAnimal);
+    preyA->initialize(0, perSpeciesPopulation * 4, 900);
+    scatterPopulation(preyA.get(), perSpeciesPopulation - 1, 900, 1000, 100, randomWalkMovements());
+
+    auto preyB = std::make_unique<Species>(Species::typeAnimal);
+    preyB->initialize(0, perSpeciesPopulation * 4, 900);
+    scatterPopulation(preyB.get(), perSpeciesPopulation - 1, 900, 1000, 100, randomWalkMovements());
+
+    const QVector<Species *> allSpecies{plants.get(), preyA.get(), preyB.get()};
+    const long long progressInterval = std::max<long long>(1, numCycles / 20);
+
+    CycleConcurrent::threadLocalPool(); // warm up the persistent worker threads before timing
+    QVector<Animal *> calcScratch;
+
+    for (auto _ : state)
+    {
+        qint64 itemsProcessed = 0;
+        for (long long cycle = 0; cycle < numCycles; ++cycle)
+        {
+            itemsProcessed += runSimulationCyclePersistentPool(allSpecies, calcScratch);
+
+            if ((cycle % progressInterval) == 0)
+            {
+                std::fprintf(stderr, "BM_LargeScaleSimulationPersistentPool: cycle %lld/%lld (plants=%d preyA=%d preyB=%d)\n",
+                             cycle, numCycles, int(plants->animals().size()),
+                             int(preyA->animals().size()), int(preyB->animals().size()));
+            }
+        }
+        state.SetItemsProcessed(itemsProcessed);
+    }
+}
+BENCHMARK(BM_LargeScaleSimulationPersistentPool)
     ->Args({100, 2000})
     ->Args({10000, 100000})
     ->Iterations(1)

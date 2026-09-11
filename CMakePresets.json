@@ -10,6 +10,15 @@
             "cacheVariables": {
                 "CMAKE_PREFIX_PATH": "C:/Qt/6.11.2/msvc2022_64"
             }
+        },
+        {
+            "name": "windows-msvc-x64-unoptimized-release",
+            "displayName": "Windows MSVC x64 + Qt 6.11.2 Unoptimized Release",
+            "inherits": "windows-msvc-x64",
+            "binaryDir": "${sourceDir}/build-unoptimized-release",
+            "cacheVariables": {
+                "QEVOLVE_UNOPTIMIZED_RELEASE": "ON"
+            }
         }
     ],
     "buildPresets": [
@@ -23,6 +32,12 @@
             "name": "windows-msvc-x64-release",
             "displayName": "Windows MSVC x64 + Qt 6.11.2 Release",
             "configurePreset": "windows-msvc-x64",
+            "configuration": "Release"
+        },
+        {
+            "name": "windows-msvc-x64-unoptimized-release",
+            "displayName": "Windows MSVC x64 + Qt 6.11.2 Unoptimized Release",
+            "configurePreset": "windows-msvc-x64-unoptimized-release",
             "configuration": "Release"
         }
     ]
