@@ -13,6 +13,7 @@
 #include <QVector>
 #include <QAtomicInteger>
 #include <QColor>
+#include <QPoint>
 #include <atomic>
 #include <Windows.h>
 
@@ -22,6 +23,9 @@
 class Animal;
 class Species;
 class CalculationThread;
+class QScrollArea;
+class QWheelEvent;
+class QMouseEvent;
 
 struct PaintQuad
 {
@@ -85,11 +89,18 @@ protected:
     void resizeGL(int w, int h) override;
     void paintGL() override;
     int heightForWidth(int w) const override;
+    void wheelEvent(QWheelEvent * event) override;
+    void mousePressEvent(QMouseEvent * event) override;
+    void mouseMoveEvent(QMouseEvent * event) override;
+    void mouseReleaseEvent(QMouseEvent * event) override;
 
 private:
     QList<Species *> loadSpecies();
     void initActors();
     QColor colorForIndex(int index) const;
+    QScrollArea * enclosingScrollArea() const;
+    void applyZoom(qreal newZoom, const QPoint & anchor);
+    void handleCanvasClicked(const QPoint & localPos);
 
 private:
     Ui::Laboratory *ui;
@@ -108,6 +119,25 @@ private:
     QString mCachedStatistics;
 
     GLfloat mVertices[8 * 10000]{};
+
+    static constexpr qreal kMinZoom = 0.5;
+    static constexpr qreal kMaxZoom = 8.0;
+    static constexpr qreal kDefaultZoom = 2.0;
+    static constexpr qreal kZoomStepFactor = 1.1;
+    // Above this many pixels of movement between press and release, a click
+    // is treated as a drag-to-pan gesture instead of a selection click.
+    static constexpr int kClickMoveTolerance = 4;
+    // Selection hit-test radius, in logical lab units, around the click -
+    // covers the visible quad (+-1 unit around an animal's position, see
+    // paintGL()) plus a little slack.
+    static constexpr qreal kHitTestRadius = 1.5;
+
+    qreal mZoom = kDefaultZoom;
+    bool mDragging = false;
+    QPoint mDragStartMouse;
+    QPoint mPressLocalPos;
+    int mDragStartHValue = 0;
+    int mDragStartVValue = 0;
 };
 
 class CalculationThread : public QThread

@@ -11,6 +11,8 @@ constexpr int LABORATORY_HEIGHT = 360;
 constexpr int MAX_NUM_PLANTS = 2000;
 constexpr int PLANT_INITIAL_ENERGY = 500;
 constexpr int PLANT_SPAWN_ENERGY = 1000;
+constexpr int ANIMAL_MINIMUM_SPAWN_AGE = 50;
+constexpr int ANIMAL_MINIMUM_SPAWN_RATE = 50;
 
 enum PlantPattern
 {

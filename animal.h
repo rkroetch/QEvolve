@@ -49,6 +49,7 @@ public:
     int cellY() const { return mCellY; }
 
     const QColor & color() const;
+    const Movements & movements() const;
 
     double energy() const;
     void setEnergy(double energy);
@@ -89,6 +90,7 @@ private:
     int mCellY = 0;
     int mListIndex = -1;
     int mCellSlot = -1;
+    uint mLastSpawnAge = 0;
 
     Species * mSpecies = nullptr;
     //[Friends][Enemies]

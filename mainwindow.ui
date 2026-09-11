@@ -27,13 +27,26 @@
        </widget>
       </item>
       <item>
-       <widget class="Laboratory" name="laboratory" native="true">
+       <widget class="QScrollArea" name="laboratoryScrollArea">
         <property name="sizePolicy">
          <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
           <horstretch>0</horstretch>
           <verstretch>0</verstretch>
          </sizepolicy>
         </property>
+        <property name="widgetResizable">
+         <bool>false</bool>
+        </property>
+        <widget class="Laboratory" name="laboratory" native="true">
+         <property name="geometry">
+          <rect>
+           <x>0</x>
+           <y>0</y>
+           <width>720</width>
+           <height>720</height>
+          </rect>
+         </property>
+        </widget>
        </widget>
       </item>
       <item>

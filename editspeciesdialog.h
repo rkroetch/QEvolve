@@ -25,8 +25,6 @@ private slots:
 
 private:
     void updateMovement(int friends, int enemies);
-    QPixmap movementIcon(MovementDirections direction) const;
-    QString movementToolTip(MovementDirections direction) const;
 
 private:
     QSignalMapper mSignalMapper;

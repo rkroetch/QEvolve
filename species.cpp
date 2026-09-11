@@ -347,6 +347,11 @@ const QVector<Animal*> *Species::occupants(int cellX, int cellY) const
     return &mOccupants[cellY][cellX];
 }
 
+const QVector<Animal*> & Species::cellOccupants(int cellX, int cellY) const
+{
+    return mOccupants[cellY][cellX];
+}
+
 QVector<Animal*> *Species::occupants(int cellX, int cellY)
 {
     return &mOccupants[cellY][cellX];
@@ -598,14 +603,8 @@ void Species::killAnimal(int cellX, int cellY, Animal * animal)
     mInactiveAnimals.append(animal);
 }
 
-void Species::spawnAnimal(QPointF pos, double startingEnergy, int spawningEnergy, int metabolism, const Movements & movements, const QPointF & direction, const Animal * parent)
+QPointF Species::jitteredPosition(QPointF pos) const
 {
-    if ( mInactiveAnimals.isEmpty() )
-    {
-        return;
-    }
-    Animal * animal = mInactiveAnimals.takeLast();
-
     QPointF newPos(pos.x() + randIntInclusive(-4, 4), pos.y() + randIntInclusive(-4, 4));
 
     if ( newPos.x() > LABORATORY_WIDTH - 1  )
@@ -624,6 +623,38 @@ void Species::spawnAnimal(QPointF pos, double startingEnergy, int spawningEnergy
     {
         newPos.setY( LABORATORY_HEIGHT - 1 );
     }
+
+    return newPos;
+}
+
+// Tries a handful of nearby candidate cells and returns the first one with no
+// same-species occupant already there, so children don't stack on top of each
+// other. Falls back to a plain jittered position if every attempt is occupied.
+QPointF Species::emptyNearbyCell(QPointF pos) const
+{
+    constexpr int maxAttempts = 20;
+    for (int attempt = 0; attempt < maxAttempts; ++attempt)
+    {
+        const QPointF candidate = jitteredPosition(pos);
+        const int x = clampCellX(int(candidate.x()));
+        const int y = clampCellY(int(candidate.y()));
+        if (cellOccupants(x, y).isEmpty())
+        {
+            return candidate;
+        }
+    }
+    return jitteredPosition(pos);
+}
+
+void Species::spawnAnimal(QPointF pos, double startingEnergy, int spawningEnergy, int metabolism, const Movements & movements, const QPointF & direction, const Animal * parent)
+{
+    if ( mInactiveAnimals.isEmpty() )
+    {
+        return;
+    }
+    Animal * animal = mInactiveAnimals.takeLast();
+
+    const QPointF newPos = emptyNearbyCell(pos);
 
     animal->initialize(newPos, this, startingEnergy, spawningEnergy, metabolism, movements, direction, parent);
     addAnimal(animal->cellX(), animal->cellY(), animal);

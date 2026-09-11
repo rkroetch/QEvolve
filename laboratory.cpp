@@ -28,6 +28,12 @@
 #include <QPair>
 #include <QtMath>
 #include <algorithm>
+#include <QScrollArea>
+#include <QScrollBar>
+#include <QWheelEvent>
+#include <QMouseEvent>
+#include <QCursor>
+#include "animalinfodialog.h"
 
 #include "cycleconcurrent.h"
 
@@ -65,8 +71,7 @@ Laboratory::Laboratory(QWidget *parent) :
 
     mSpeed = 0;
 
-    setMinimumWidth(LABORATORY_WIDTH);
-    setMinimumHeight(LABORATORY_HEIGHT);
+    resize(qRound(LABORATORY_WIDTH * mZoom), qRound(LABORATORY_HEIGHT * mZoom));
 
     mSpecies = loadSpecies();
 
@@ -75,7 +80,7 @@ Laboratory::Laboratory(QWidget *parent) :
 
     auto * plants = new Species(Species::typePlant);
     plants->setColor(QColor(Qt::green));
-    plants->setMetabolism(1.0);
+    plants->setMetabolism(10.0);
     plants->setSpawningEnergy(PLANT_SPAWN_ENERGY);
     plants->setMovement(0, 0, MoveStop);
     plants->setMovement(1, 0, MoveStop);
@@ -351,6 +356,193 @@ void Laboratory::paintGL()
 int Laboratory::heightForWidth(int w) const
 {
     return int( ((float)LABORATORY_HEIGHT / (float)LABORATORY_WIDTH ) * (float)w);
+}
+
+QScrollArea * Laboratory::enclosingScrollArea() const
+{
+    for (QWidget * p = parentWidget(); p; p = p->parentWidget())
+    {
+        if (auto * area = qobject_cast<QScrollArea *>(p))
+        {
+            return area;
+        }
+    }
+    return nullptr;
+}
+
+void Laboratory::applyZoom(qreal newZoom, const QPoint & anchor)
+{
+    newZoom = qBound(kMinZoom, newZoom, kMaxZoom);
+    if (qFuzzyCompare(newZoom, mZoom))
+    {
+        return;
+    }
+
+    QScrollArea * scrollArea = enclosingScrollArea();
+    int oldHValue = 0;
+    int oldVValue = 0;
+    if (scrollArea)
+    {
+        oldHValue = scrollArea->horizontalScrollBar()->value();
+        oldVValue = scrollArea->verticalScrollBar()->value();
+    }
+
+    const qreal scaleFactor = newZoom / mZoom;
+    mZoom = newZoom;
+    resize(qRound(LABORATORY_WIDTH * mZoom), qRound(LABORATORY_HEIGHT * mZoom));
+
+    if (scrollArea)
+    {
+        const int newHValue = qRound(oldHValue + anchor.x() * (scaleFactor - 1));
+        const int newVValue = qRound(oldVValue + anchor.y() * (scaleFactor - 1));
+        scrollArea->horizontalScrollBar()->setValue(newHValue);
+        scrollArea->verticalScrollBar()->setValue(newVValue);
+    }
+}
+
+void Laboratory::wheelEvent(QWheelEvent * event)
+{
+    const int deltaY = event->angleDelta().y();
+    if (deltaY == 0)
+    {
+        QOpenGLWidget::wheelEvent(event);
+        return;
+    }
+
+    const qreal steps = deltaY / 120.0;
+    applyZoom(mZoom * qPow(kZoomStepFactor, steps), event->position().toPoint());
+    event->accept();
+}
+
+void Laboratory::mousePressEvent(QMouseEvent * event)
+{
+    if (event->button() == Qt::LeftButton)
+    {
+        if (QScrollArea * scrollArea = enclosingScrollArea())
+        {
+            mDragging = true;
+            mDragStartMouse = event->globalPosition().toPoint();
+            mPressLocalPos = event->position().toPoint();
+            mDragStartHValue = scrollArea->horizontalScrollBar()->value();
+            mDragStartVValue = scrollArea->verticalScrollBar()->value();
+            setCursor(Qt::ClosedHandCursor);
+            event->accept();
+            return;
+        }
+    }
+    QOpenGLWidget::mousePressEvent(event);
+}
+
+void Laboratory::mouseMoveEvent(QMouseEvent * event)
+{
+    if (mDragging)
+    {
+        if (QScrollArea * scrollArea = enclosingScrollArea())
+        {
+            const QPoint delta = event->globalPosition().toPoint() - mDragStartMouse;
+            scrollArea->horizontalScrollBar()->setValue(mDragStartHValue - delta.x());
+            scrollArea->verticalScrollBar()->setValue(mDragStartVValue - delta.y());
+        }
+        event->accept();
+        return;
+    }
+    QOpenGLWidget::mouseMoveEvent(event);
+}
+
+void Laboratory::mouseReleaseEvent(QMouseEvent * event)
+{
+    if (event->button() == Qt::LeftButton && mDragging)
+    {
+        mDragging = false;
+        unsetCursor();
+
+        const QPoint delta = event->globalPosition().toPoint() - mDragStartMouse;
+        if (delta.manhattanLength() <= kClickMoveTolerance)
+        {
+            handleCanvasClicked(mPressLocalPos);
+        }
+
+        event->accept();
+        return;
+    }
+    QOpenGLWidget::mouseReleaseEvent(event);
+}
+
+void Laboratory::handleCanvasClicked(const QPoint & localPos)
+{
+    if (width() <= 0 || height() <= 0)
+    {
+        return;
+    }
+
+    const QPointF logicalPos(localPos.x() * double(LABORATORY_WIDTH) / width(),
+                              localPos.y() * double(LABORATORY_HEIGHT) / height());
+    const int cellX = clampCellX(int(logicalPos.x()));
+    const int cellY = clampCellY(int(logicalPos.y()));
+    const qreal hitTestRadiusSq = kHitTestRadius * kHitTestRadius;
+
+    // Animals are drawn as a 2-logical-unit-wide quad centered on their exact
+    // position (see paintGL()), so a click on the visible square can easily
+    // land in a cell other than the one that animal's (truncated) position
+    // belongs to. Search the clicked cell's full 3x3 neighborhood - the same
+    // neighbor set/wraparound the rest of the simulation uses, via
+    // Species::forEachNeighborCell - and keep whatever falls within
+    // kHitTestRadius of the actual click, so the whole visible quad (plus a
+    // little slack) is clickable rather than just a sliver of its cell.
+    QVector<QPair<qreal, AnimalSnapshot>> hits;
+
+    {
+        // A write lock is needed (not just a read lock) because the fields
+        // we're copying here (pos, statistics, ...) are mutated by
+        // CalculationThread's worker threads without any lock of their own
+        // during the calculation phase - see the QReadLocker in
+        // CalculationThread::run(), which only protects the species/cell
+        // topology, not the per-Animal fields calculateMovement() writes.
+        // Only a write lock actually excludes that phase.
+        QWriteLocker locker(&positionLock);
+        for (Species * species : qAsConst(mSpecies))
+        {
+            species->forEachNeighborCell(cellX, cellY, [&](int x, int y) {
+                for (Animal * animal : species->cellOccupants(x, y))
+                {
+                    const QPointF delta = animal->pos() - logicalPos;
+                    const qreal distSq = QPointF::dotProduct(delta, delta);
+                    if (distSq > hitTestRadiusSq)
+                    {
+                        continue;
+                    }
+
+                    AnimalSnapshot snapshot;
+                    snapshot.speciesName = species->name();
+                    snapshot.species = species;
+                    snapshot.color = animal->color();
+                    snapshot.pos = animal->pos();
+                    snapshot.movements = animal->movements();
+                    snapshot.stats = animal->statistics();
+                    hits.append({distSq, snapshot});
+                }
+            });
+        }
+    }
+
+    if (hits.isEmpty())
+    {
+        return;
+    }
+
+    std::sort(hits.begin(), hits.end(), [](const auto & a, const auto & b) {
+        return a.first < b.first;
+    });
+
+    QVector<AnimalSnapshot> snapshots;
+    snapshots.reserve(hits.size());
+    for (const auto & hit : hits)
+    {
+        snapshots.append(hit.second);
+    }
+
+    AnimalInfoDialog dialog(snapshots, this);
+    dialog.exec();
 }
 
 QColor Laboratory::colorForIndex(int index) const

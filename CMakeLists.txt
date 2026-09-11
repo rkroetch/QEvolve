@@ -28,6 +28,7 @@ qt_standard_project_setup()
 
 qt_add_executable(QEvolve WIN32 MACOSX_BUNDLE
     animal.cpp animal.h
+    animalinfodialog.cpp animalinfodialog.h animalinfodialog.ui
     common.h
     deatheffects.cpp deatheffects.h
     delay.h
@@ -35,6 +36,7 @@ qt_add_executable(QEvolve WIN32 MACOSX_BUNDLE
     laboratory.cpp laboratory.h laboratory.ui
     main.cpp
     mainwindow.cpp mainwindow.h mainwindow.ui
+    movementicons.cpp movementicons.h
     species.cpp species.h
     speciesbuttonlayoutwidget.cpp speciesbuttonlayoutwidget.h speciesbuttonlayoutwidget.ui
     speciesbuttonwidget.cpp speciesbuttonwidget.h

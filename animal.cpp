@@ -55,6 +55,7 @@ void Animal::initialize(QPointF pos, Species * species, double energy, int spawn
     mDirection =  direction;
     mNextEnergyDiff = 0;
     mNextEaten.store(false, std::memory_order_relaxed);
+    mLastSpawnAge = 0;
 }
 
 QPointF Animal::movement(unsigned int friends, unsigned int enemies, const QPointF &curDirection) const
@@ -132,6 +133,11 @@ const QPointF & Animal::pos() const
 const QColor & Animal::color() const
 {
     return mColor;
+}
+
+const Movements & Animal::movements() const
+{
+    return mMovements;
 }
 
 double Animal::energy() const
@@ -245,7 +251,7 @@ void Animal::executeMovement()
 
     if ( species()->type() == Species::typePlant )
     {
-        mEnergy += mMetabolism / 100;
+        mEnergy += mMetabolism / 100.0;
         mStatistics.mEnergy = mEnergy;
     }
     else
@@ -258,7 +264,8 @@ void Animal::executeMovement()
         killSelf();
         return;
     }
-    if ( mEnergy >= mSpawningEnergy )
+    if ( mEnergy >= mSpawningEnergy && mStatistics.mAge > ANIMAL_MINIMUM_SPAWN_AGE
+         && (mStatistics.mAge - mLastSpawnAge) >= ANIMAL_MINIMUM_SPAWN_RATE )
     {
         spawnSelf();
     }
@@ -305,4 +312,5 @@ void Animal::spawnSelf()
     mEnergy = mEnergy / 2;
     mStatistics.mEnergy = mEnergy;
     ++mStatistics.mNumChildren;
+    mLastSpawnAge = mStatistics.mAge;
 }

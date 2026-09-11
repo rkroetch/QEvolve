@@ -88,6 +88,10 @@ public:
     QVector<Animal*> & animals();
     const QVector<Animal*> & animals() const;
 
+    // This species' own animals occupying the given cell (see mOccupants) -
+    // unlike animals(), which is every active animal in the species.
+    const QVector<Animal*> & cellOccupants(int cellX, int cellY) const;
+
     void save(const QString & filename);
 
     QPixmap heatMap() const;
@@ -145,6 +149,8 @@ private:
     bool tryClaimCombatCell(int cellX, int cellY);
     const QVector<Animal*> *occupants(int cellX, int cellY) const;
     QVector<Animal*> *occupants(int cellX, int cellY);
+    QPointF jitteredPosition(QPointF pos) const;
+    QPointF emptyNearbyCell(QPointF pos) const;
 
 private:
     static const uint SPECIES_MAGIC_NUMBER = 0x0E7017E0;
