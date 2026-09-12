@@ -6,13 +6,22 @@
 #include <string.h>
 #include <random>
 
-constexpr int LABORATORY_WIDTH = 360;
-constexpr int LABORATORY_HEIGHT = 360;
+// Roughly matches the aspect ratio of the laboratory's on-screen viewport:
+// a typical desktop screen minus the space permanently taken by the other
+// default-visible UI elements around it (species buttons panel, menu/tool
+// bars, speed slider row, status bar - the statistics/graph panels don't
+// count since they're hidden by default). That comes out close to 2:1,
+// wider than the ~16:9 screen itself since the fixed chrome eats
+// proportionally more height than width.
+constexpr int LABORATORY_WIDTH = 512;
+constexpr int LABORATORY_HEIGHT = 256;
 constexpr int MAX_NUM_PLANTS = 2000;
 constexpr int PLANT_INITIAL_ENERGY = 500;
 constexpr int PLANT_SPAWN_ENERGY = 1000;
-constexpr int ANIMAL_MINIMUM_SPAWN_AGE = 50;
-constexpr int ANIMAL_MINIMUM_SPAWN_RATE = 50;
+constexpr int ANIMAL_INITIAL_ENERGY = 900;
+constexpr int ANIMAL_MINIMUM_SPAWN_AGE = 500;
+constexpr int ANIMAL_MINIMUM_SPAWN_RATE = 500;
+constexpr int ANIMAL_MINIMUM_PLANT_RATE = 50;
 
 enum PlantPattern
 {

@@ -69,7 +69,7 @@ void Species::rebuildCaches()
     }
 }
 
-void Species::initialize(int numAnimals, int maxAnimals, int initialEnergy)
+void Species::initialize(int numAnimals, int maxAnimals, int initialEnergy, bool spawnInitialAnimal)
 {
     mMaximumAnimals = maxAnimals;
     if ( numAnimals > maxAnimals )
@@ -77,12 +77,18 @@ void Species::initialize(int numAnimals, int maxAnimals, int initialEnergy)
         numAnimals = maxAnimals;
     }
 
+    mInitialAnimalCount = qMax(numAnimals, 1);
+
+    if ( spawnInitialAnimal )
     {
-        const int x = randIntInclusive(5, LABORATORY_WIDTH - 5);
-        const int y = randIntInclusive(5, LABORATORY_HEIGHT - 5);
-        QPointF pos(x, y);
-        auto * animal = new Animal(pos, this, initialEnergy, mUserData.mSpawningEnergy, mUserData.mMetabolism, mUserData.mMovements);
-        addAnimal(animal->cellX(), animal->cellY(), animal);
+        for ( int index = 0; index < mInitialAnimalCount; ++index )
+        {
+            const int x = randIntInclusive(5, LABORATORY_WIDTH - 5);
+            const int y = randIntInclusive(5, LABORATORY_HEIGHT - 5);
+            QPointF pos(x, y);
+            auto * animal = new Animal(pos, this, initialEnergy, mUserData.mSpawningEnergy, mUserData.mMetabolism, mUserData.mMovements);
+            addAnimal(animal->cellX(), animal->cellY(), animal);
+        }
     }
 
     mInactiveAnimals.reserve(maxAnimals - numAnimals);
@@ -150,13 +156,13 @@ bool Species::load(const QString &filename, Species & species)
     species.mUserData.mName = fileInfo.fileName().remove(".SPC");
 
     species.setMovement(0, 0, MovementDirections(genes.at(0).toUInt()));
-    species.setMovement(0, 1, MovementDirections(genes.at(1).toUInt()));
-    species.setMovement(0, 2, MovementDirections(genes.at(2).toUInt()));
-    species.setMovement(1, 0, MovementDirections(genes.at(3).toUInt()));
+    species.setMovement(1, 0, MovementDirections(genes.at(1).toUInt()));
+    species.setMovement(2, 0, MovementDirections(genes.at(2).toUInt()));
+    species.setMovement(0, 1, MovementDirections(genes.at(3).toUInt()));
     species.setMovement(1, 1, MovementDirections(genes.at(4).toUInt()));
-    species.setMovement(1, 2, MovementDirections(genes.at(5).toUInt()));
-    species.setMovement(2, 0, MovementDirections(genes.at(6).toUInt()));
-    species.setMovement(2, 1, MovementDirections(genes.at(7).toUInt()));
+    species.setMovement(2, 1, MovementDirections(genes.at(5).toUInt()));
+    species.setMovement(0, 2, MovementDirections(genes.at(6).toUInt()));
+    species.setMovement(1, 2, MovementDirections(genes.at(7).toUInt()));
     species.setMovement(2, 2, MovementDirections(genes.at(8).toUInt()));
 
     species.mUserData.mMetabolism = lines.at(2).toInt();
@@ -342,6 +348,56 @@ bool Species::canSpawn() const
     return ( mAnimals.size() < mMaximumAnimals );
 }
 
+bool Species::isActive() const
+{
+    return mActive;
+}
+
+void Species::activate()
+{
+    if ( mActive )
+    {
+        return;
+    }
+    mActive = true;
+
+    if ( mType != typeAnimal )
+    {
+        return;
+    }
+
+    // Re-populate with the same number of randomly-placed, randomly-directed
+    // animals that initialize() places on a cold start/reset, drawn from the
+    // inactive pool that deactivate() returned this species' animals to.
+    for ( int index = 0; index < mInitialAnimalCount; ++index )
+    {
+        const int x = randIntInclusive(5, LABORATORY_WIDTH - 5);
+        const int y = randIntInclusive(5, LABORATORY_HEIGHT - 5);
+        const QPointF direction(randIntInclusive(-1, 1), randIntInclusive(-1, 1));
+        spawnAnimal(QPointF(x, y), ANIMAL_INITIAL_ENERGY, mUserData.mSpawningEnergy, mUserData.mMetabolism, mUserData.mMovements, direction, nullptr);
+    }
+}
+
+void Species::deactivate()
+{
+    if ( !mActive )
+    {
+        return;
+    }
+    mActive = false;
+
+    if ( mType != typeAnimal )
+    {
+        return;
+    }
+
+    const QVector<Animal *> snapshot = mAnimals;
+    for ( Animal * animal : snapshot )
+    {
+        killAnimal(animal->cellX(), animal->cellY(), animal);
+    }
+}
+
 const QVector<Animal*> *Species::occupants(int cellX, int cellY) const
 {
     return &mOccupants[cellY][cellX];
@@ -476,10 +532,10 @@ int Species::plantCount(int cellX, int cellY) const
     return mPlantSpecies ? mPlantSpecies->friendCount(cellX, cellY) : 0;
 }
 
-Animal *Species::firstNeighbor(int cellX, int cellY) const
+Animal *Species::firstNeighbor(int cellX, int cellY, const Animal * exclude) const
 {
     Animal * found = nullptr;
-    forEachNeighborCell(cellX, cellY, [this, &found](int x, int y) {
+    forEachNeighborCell(cellX, cellY, [this, &found, exclude](int x, int y) {
         if (found)
         {
             return;
@@ -489,7 +545,14 @@ Animal *Species::firstNeighbor(int cellX, int cellY) const
         {
             return;
         }
-        found = cell->first();
+        for (Animal * animal : *cell)
+        {
+            if (animal != exclude)
+            {
+                found = animal;
+                return;
+            }
+        }
     });
     return found;
 }

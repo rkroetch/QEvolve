@@ -29,6 +29,36 @@ protected:
     std::unique_ptr<Species> mSpecies;
 };
 
+// Unlike AnimalTest, this fixture doesn't pre-populate the species with a
+// randomly-positioned animal, so Merge/Split neighbor tests can place
+// animals at exact, known cells without risking incidental collisions.
+class AnimalMovementNeighborTest : public ::testing::Test
+{
+protected:
+    void SetUp() override
+    {
+        mSpecies = std::make_unique<Species>(Species::typeAnimal);
+    }
+
+    void TearDown() override
+    {
+        mSpecies.reset();
+    }
+
+    std::unique_ptr<Species> mSpecies;
+};
+
+// Places a fully-controlled Animal into `species` at `pos` with a known
+// direction and gene table, mirroring species_test.cpp's addAnimalAt() but
+// exposing the extra fields Merge/Split tests need to control.
+Animal * placeAnimal(Species & species, QPointF pos, QPointF direction, const Movements & movements)
+{
+    auto * animal = new Animal();
+    animal->initialize(pos, &species, 900, 1000, 100, movements, direction, nullptr);
+    species.addAnimal(animal->cellX(), animal->cellY(), animal);
+    return animal;
+}
+
 } // namespace
 
 TEST_F(AnimalTest, ConstructionRecordsEnergyAndSpecies)
@@ -73,9 +103,9 @@ TEST_F(AnimalTest, SetEnergyUpdatesStatistics)
 TEST_F(AnimalTest, SetPosUpdatesCellCoordinates)
 {
     Animal * a = animal();
-    a->setPos(QPointF(12.7, 340.2));
+    a->setPos(QPointF(12.7, LABORATORY_HEIGHT - 19.8));
     EXPECT_EQ(a->cellX(), 12);
-    EXPECT_EQ(a->cellY(), 340);
+    EXPECT_EQ(a->cellY(), LABORATORY_HEIGHT - 20);
 }
 
 TEST_F(AnimalTest, TryClaimEatenSucceedsOnlyOnce)
@@ -117,6 +147,86 @@ TEST_F(AnimalTest, MovementGoReturnsCurrentDirection)
     EXPECT_EQ(a.movement(0, 0, direction), direction);
 }
 
+TEST_F(AnimalMovementNeighborTest, MergeWithNoNeighborKeepsCurrentDirection)
+{
+    // Regression test: firstNeighbor() used to find the querying animal in
+    // its own cell and "merge" with itself, so this never used to reach the
+    // no-neighbor fallback despite there being no other animal around.
+    Movements movements;
+    movements.setMovement(0, 0, MoveMerge);
+    Animal * self = placeAnimal(*mSpecies, QPointF(50, 50), QPointF(0, 0), movements);
+
+    const QPointF curDirection(0.5, -0.5);
+    EXPECT_EQ(self->movement(0, 0, curDirection), curDirection);
+}
+
+TEST_F(AnimalMovementNeighborTest, MergeWithNeighborAdoptsNeighborDirection)
+{
+    Movements movements;
+    movements.setMovement(0, 0, MoveMerge);
+    Animal * self = placeAnimal(*mSpecies, QPointF(50, 50), QPointF(0, 0), movements);
+    placeAnimal(*mSpecies, QPointF(50, 50), QPointF(1.0, 0.0), Movements());
+
+    EXPECT_EQ(self->movement(0, 0, QPointF(0, -1)), QPointF(1.0, 0.0));
+}
+
+TEST_F(AnimalMovementNeighborTest, MergeFindsNeighborInAdjacentCell)
+{
+    Movements movements;
+    movements.setMovement(0, 0, MoveMerge);
+    Animal * self = placeAnimal(*mSpecies, QPointF(50, 50), QPointF(0, 0), movements);
+    placeAnimal(*mSpecies, QPointF(49, 50), QPointF(0.0, 1.0), Movements());
+
+    EXPECT_EQ(self->movement(0, 0, QPointF(0, -1)), QPointF(0.0, 1.0));
+}
+
+TEST_F(AnimalMovementNeighborTest, SplitWithNoNeighborKeepsCurrentDirection)
+{
+    // Regression test: same self-as-neighbor issue as Merge above meant this
+    // fallback was previously unreachable, and MoveSplit always randomized.
+    Movements movements;
+    movements.setMovement(0, 0, MoveSplit);
+    Animal * self = placeAnimal(*mSpecies, QPointF(50, 50), QPointF(0, 0), movements);
+
+    const QPointF curDirection(0.5, -0.5);
+    EXPECT_EQ(self->movement(0, 0, curDirection), curDirection);
+}
+
+TEST_F(AnimalMovementNeighborTest, SplitMovesDirectlyAwayFromNeighbor)
+{
+    Movements movements;
+    movements.setMovement(0, 0, MoveSplit);
+    Animal * self = placeAnimal(*mSpecies, QPointF(50, 50), QPointF(0, 0), movements);
+    placeAnimal(*mSpecies, QPointF(51, 50), QPointF(0, 0), Movements());
+
+    EXPECT_EQ(self->movement(0, 0, QPointF(0, -1)), QPointF(-1.0, 0.0));
+}
+
+TEST_F(AnimalMovementNeighborTest, SplitMovesDiagonallyAwayFromNeighbor)
+{
+    Movements movements;
+    movements.setMovement(0, 0, MoveSplit);
+    Animal * self = placeAnimal(*mSpecies, QPointF(50, 50), QPointF(0, 0), movements);
+    placeAnimal(*mSpecies, QPointF(51, 51), QPointF(0, 0), Movements());
+
+    EXPECT_EQ(self->movement(0, 0, QPointF(0, -1)), QPointF(-0.5, -0.5));
+}
+
+TEST_F(AnimalMovementNeighborTest, SplitPicksRandomDirectionWhenCoincidentWithNeighbor)
+{
+    Movements movements;
+    movements.setMovement(0, 0, MoveSplit);
+    Animal * self = placeAnimal(*mSpecies, QPointF(50, 50), QPointF(0, 0), movements);
+    placeAnimal(*mSpecies, QPointF(50, 50), QPointF(0, 0), Movements());
+
+    for (int i = 0; i < 20; ++i)
+    {
+        const QPointF result = self->movement(0, 0, QPointF(0, -1));
+        EXPECT_TRUE(result.x() == -0.5 || result.x() == 0.0 || result.x() == 0.5);
+        EXPECT_TRUE(result.y() == -0.5 || result.y() == 0.0 || result.y() == 0.5);
+    }
+}
+
 TEST_F(AnimalTest, ExecuteMovementKillsSelfWhenEnergyDepleted)
 {
     Animal * a = animal();
@@ -138,9 +248,20 @@ TEST_F(AnimalTest, ExecuteMovementIncrementsAge)
 TEST_F(AnimalTest, ExecuteMovementSpawnsWhenEnergyReachesThreshold)
 {
     Animal * a = animal();
+    ASSERT_EQ(mSpecies->animals().size(), 1);
+
+    // executeMovement() only spawns once the animal is older than
+    // ANIMAL_MINIMUM_SPAWN_AGE (and that many cycles past its last spawn),
+    // so age it up first. Energy stays well under the species' default
+    // spawning energy the whole time, so this can't trigger a spawn early.
+    for (int i = 0; i <= ANIMAL_MINIMUM_SPAWN_AGE; ++i)
+    {
+        a->executeMovement();
+    }
+    ASSERT_EQ(mSpecies->animals().size(), 1);
+
     a->setSpawningEnergy(100);
     a->setEnergy(500);
-    ASSERT_EQ(mSpecies->animals().size(), 1);
 
     a->executeMovement();
 

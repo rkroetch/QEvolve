@@ -21,6 +21,9 @@ public:
 
     void setSpecies(QList<Species *> species);
 
+signals:
+    void speciesActiveToggled(Species * species, bool active);
+
 private slots:
     void handleSpeciesClicked(int speciesIdx);
 

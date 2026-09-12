@@ -166,13 +166,44 @@ TEST_F(SpeciesBasicTest, MoveAnimalUpdatesOccupancyCounts)
     // ordinary interior cells far enough apart that they share no neighbors.
     Animal * animal = addAnimalAt(*mSpecies, QPointF(50, 50), 900);
     ASSERT_EQ(mSpecies->friendCount(50, 50), 1);
-    ASSERT_EQ(mSpecies->friendCount(300, 300), 0);
+    ASSERT_EQ(mSpecies->friendCount(300, 150), 0);
 
-    mSpecies->moveAnimal(animal->cellX(), animal->cellY(), 300, 300, animal);
-    animal->setPos(QPointF(300, 300));
+    mSpecies->moveAnimal(animal->cellX(), animal->cellY(), 300, 150, animal);
+    animal->setPos(QPointF(300, 150));
 
     EXPECT_EQ(mSpecies->friendCount(50, 50), 0);
-    EXPECT_EQ(mSpecies->friendCount(300, 300), 1);
+    EXPECT_EQ(mSpecies->friendCount(300, 150), 1);
+}
+
+TEST_F(SpeciesBasicTest, FirstNeighborExcludesSelfWhenAlone)
+{
+    // Regression test: firstNeighbor() used to return cell->first() without
+    // filtering out the querying animal, so a lone animal always "found"
+    // itself as its own neighbor.
+    Animal * self = addAnimalAt(*mSpecies, QPointF(50, 50), 900);
+    EXPECT_EQ(mSpecies->firstNeighbor(self->cellX(), self->cellY(), self), nullptr);
+}
+
+TEST_F(SpeciesBasicTest, FirstNeighborFindsOtherOccupantInSameCellButExcludesSelf)
+{
+    Animal * self = addAnimalAt(*mSpecies, QPointF(50, 50), 900);
+    Animal * other = addAnimalAt(*mSpecies, QPointF(50, 50), 900);
+
+    EXPECT_EQ(mSpecies->firstNeighbor(self->cellX(), self->cellY(), self), other);
+    EXPECT_EQ(mSpecies->firstNeighbor(self->cellX(), self->cellY(), other), self);
+}
+
+TEST_F(SpeciesBasicTest, FirstNeighborFindsOccupantInAdjacentCell)
+{
+    Animal * self = addAnimalAt(*mSpecies, QPointF(50, 50), 900);
+    Animal * other = addAnimalAt(*mSpecies, QPointF(51, 50), 900);
+
+    EXPECT_EQ(mSpecies->firstNeighbor(self->cellX(), self->cellY(), self), other);
+}
+
+TEST_F(SpeciesBasicTest, FirstNeighborWithoutExclusionReturnsNullOnEmptyNeighborhood)
+{
+    EXPECT_EQ(mSpecies->firstNeighbor(50, 50), nullptr);
 }
 
 TEST_F(SpeciesBasicTest, EatWeakestPlantReturnsZeroWhenNoPlantSpeciesExists)

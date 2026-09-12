@@ -46,20 +46,6 @@ target_compile_definitions(QEvolve PRIVATE
     _USE_MATH_DEFINES
 )
 
-# CalculationThread::run()'s threading backend (see ActiveConcurrent in
-# laboratory.cpp / cycleconcurrent.h). Default (OFF) is QtConcurrent -
-# correct when cycles are paced. ON switches to a persistent worker-pool
-# backend that trades higher CPU utilization for substantially lower wall
-# time at speed == 0 (no delay between cycles) - see
-# benchmarks/species_benchmark.cpp's BM_LargeScaleSimulation vs
-# BM_LargeScaleSimulationPersistentPool for the measured trade-off.
-option(QEVOLVE_USE_PERSISTENT_THREAD_POOL
-    "Use the persistent worker-pool threading backend (CycleConcurrent) instead of QtConcurrent::blockingMap for CalculationThread::run()"
-    OFF)
-if(QEVOLVE_USE_PERSISTENT_THREAD_POOL)
-    target_compile_definitions(QEvolve PRIVATE QEVOLVE_USE_PERSISTENT_THREAD_POOL)
-endif()
-
 target_link_libraries(QEvolve PRIVATE
     Qt::Charts
     Qt::Concurrent

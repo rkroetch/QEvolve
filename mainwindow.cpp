@@ -42,9 +42,16 @@ MainWindow::MainWindow(QWidget *parent) :
             this, SLOT(updateStatusBar()));
     mNumAnimalsTimer.start();
 
+    ui->textBrowser->setVisible(ui->actionShowStatistics->isChecked());
+    ui->chartView->setVisible(ui->actionShowGraph->isChecked());
+    connect(ui->actionShowStatistics, &QAction::toggled, ui->textBrowser, &QWidget::setVisible);
+    connect(ui->actionShowGraph, &QAction::toggled, ui->chartView, &QWidget::setVisible);
+
     ui->laboratory->setSpeed(ui->speedSlider->value());
 
     ui->speciesButtons->setSpecies(ui->laboratory->species());
+    connect(ui->speciesButtons, &SpeciesButtonLayoutWidget::speciesActiveToggled,
+            ui->laboratory, &Laboratory::setSpeciesActive);
 
     mChart.legend()->hide();
     mChart.addSeries(&mSeries);

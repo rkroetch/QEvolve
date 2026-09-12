@@ -56,6 +56,7 @@ void Animal::initialize(QPointF pos, Species * species, double energy, int spawn
     mNextEnergyDiff = 0;
     mNextEaten.store(false, std::memory_order_relaxed);
     mLastSpawnAge = 0;
+    mLastPlantEatAge = -ANIMAL_MINIMUM_PLANT_RATE;
 }
 
 QPointF Animal::movement(unsigned int friends, unsigned int enemies, const QPointF &curDirection) const
@@ -92,7 +93,7 @@ QPointF Animal::movement(unsigned int friends, unsigned int enemies, const QPoin
         return QPointF(-curDirection.y(), curDirection.x());
     case MoveMerge:
     {
-        const Animal * neighbor = mSpecies->firstNeighbor(mCellX, mCellY);
+        const Animal * neighbor = mSpecies->firstNeighbor(mCellX, mCellY, this);
         if ( !neighbor )
         {
             return curDirection;
@@ -101,12 +102,19 @@ QPointF Animal::movement(unsigned int friends, unsigned int enemies, const QPoin
     }
     case MoveSplit:
     {
-        const Animal * neighbor = mSpecies->firstNeighbor(mCellX, mCellY);
+        const Animal * neighbor = mSpecies->firstNeighbor(mCellX, mCellY, this);
         if ( !neighbor )
         {
             return curDirection;
         }
-        return QPointF(qreal(randIntInclusive(-1, 1)) / 2.0, qreal(randIntInclusive(-1, 1)) / 2.0);
+        const QPointF away = mPos - neighbor->mPos;
+        if ( away.isNull() )
+        {
+            return QPointF(qreal(randIntInclusive(-1, 1)) / 2.0, qreal(randIntInclusive(-1, 1)) / 2.0);
+        }
+        const qreal x = away.x() > 0 ? 1.0 : (away.x() < 0 ? -1.0 : 0.0);
+        const qreal y = away.y() > 0 ? 1.0 : (away.y() < 0 ? -1.0 : 0.0);
+        return (x != 0.0 && y != 0.0) ? QPointF(x * 0.5, y * 0.5) : QPointF(x, y);
     }
     default:
         return QPointF(0.0, 0.0);
@@ -198,9 +206,10 @@ void Animal::calculateMovement()
     mStatistics.mNumFriends = static_cast<uint>(friends);
     mStatistics.mNumEnemies = static_cast<uint>(enemies);
 
-    if ( plants > 0 )
+    if ( plants > 0 && (static_cast<int>(mStatistics.mAge) - mLastPlantEatAge) >= ANIMAL_MINIMUM_PLANT_RATE )
     {
         mNextEnergyDiff += mSpecies->eatWeakestPlant(mCellX, mCellY) / qMax(1, enemies + friends + 1);
+        mLastPlantEatAge = static_cast<int>(mStatistics.mAge);
     }
 
     if ( enemies > 0 && friends >= 3)

@@ -44,8 +44,12 @@ public:
     static Species * plantSpecies();
 
     void clear();
-    void initialize(int numAnimals, int maxAnimals, int initialEnergy);
+    void initialize(int numAnimals, int maxAnimals, int initialEnergy, bool spawnInitialAnimal = true);
     void respawn(int numAnimals, int initialEnergy);
+
+    bool isActive() const;
+    void activate();
+    void deactivate();
 
     void setPlantPattern(PlantPattern pattern) { mPlantPattern = pattern; }
     PlantPattern plantPattern() const { return mPlantPattern; }
@@ -70,7 +74,7 @@ public:
     int friendCount(int cellX, int cellY) const;
     int enemyCount(int cellX, int cellY) const;
     int plantCount(int cellX, int cellY) const;
-    Animal *firstNeighbor(int cellX, int cellY) const;
+    Animal *firstNeighbor(int cellX, int cellY, const Animal * exclude = nullptr) const;
     void advanceCombatCycle();
 
     double energyLevel(QPointF pos) const;
@@ -160,9 +164,11 @@ private:
     SpeciesUserData mUserData;
 
     int mMaximumAnimals;
+    int mInitialAnimalCount = 1;
     int mSpeciesIndex;
     SpeciesType mType;
     PlantPattern mPlantPattern = plantPatternOneGroup;
+    bool mActive = true;
 
     static QList<Species*> mSpeciesList;
     static Species *mPlantSpecies;

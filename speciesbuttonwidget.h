@@ -2,6 +2,7 @@
 #define SPECIESBUTTONWIDGET_H
 
 #include <QPushButton>
+#include <QColor>
 
 class SpeciesButtonWidget : public QPushButton
 {
@@ -18,9 +19,10 @@ public slots:
 
 protected:
     QSize minimumSizeHint() const override;
+    void paintEvent(QPaintEvent *event) override;
 
 private:
-    QPixmap mPixmap;
+    QColor mColor;
 
 };
 

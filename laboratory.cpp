@@ -32,6 +32,7 @@
 #include <QScrollBar>
 #include <QWheelEvent>
 #include <QMouseEvent>
+#include <QShowEvent>
 #include <QCursor>
 #include "animalinfodialog.h"
 
@@ -51,6 +52,7 @@
 // measured trade-off. Both backends expose the same blockingMap(sequence,
 // fn) contract, so this is a namespace swap - no call site below needs to
 // change with the mode.
+#define QEVOLVE_USE_PERSISTENT_THREAD_POOL
 #ifdef QEVOLVE_USE_PERSISTENT_THREAD_POOL
 namespace ActiveConcurrent = CycleConcurrent;
 #else
@@ -79,6 +81,7 @@ Laboratory::Laboratory(QWidget *parent) :
     setPlantPattern(settings.value("Plants.Pattern", plantPatternOneGroup).value<PlantPattern>());
 
     auto * plants = new Species(Species::typePlant);
+    plants->setName("Plant");
     plants->setColor(QColor(Qt::green));
     plants->setMetabolism(10.0);
     plants->setSpawningEnergy(PLANT_SPAWN_ENERGY);
@@ -220,6 +223,28 @@ void Laboratory::reset()
 {
     stop();
     initActors();
+    update();
+}
+
+void Laboratory::setSpeciesActive(Species * species, bool active)
+{
+    if (!species || species->isActive() == active)
+    {
+        return;
+    }
+
+    positionLock.lockForWrite();
+    if (active)
+    {
+        species->activate();
+    }
+    else
+    {
+        species->deactivate();
+    }
+    positionLock.unlock();
+
+    captureFrame();
     update();
 }
 
@@ -370,9 +395,28 @@ QScrollArea * Laboratory::enclosingScrollArea() const
     return nullptr;
 }
 
+qreal Laboratory::fitZoom() const
+{
+    QScrollArea * scrollArea = enclosingScrollArea();
+    if (!scrollArea)
+    {
+        return kMinZoom;
+    }
+
+    const QSize viewportSize = scrollArea->viewport()->size();
+    if (viewportSize.width() <= 0 || viewportSize.height() <= 0)
+    {
+        return kMinZoom;
+    }
+
+    const qreal widthFit = qreal(viewportSize.width()) / LABORATORY_WIDTH;
+    const qreal heightFit = qreal(viewportSize.height()) / LABORATORY_HEIGHT;
+    return qMin(widthFit, heightFit);
+}
+
 void Laboratory::applyZoom(qreal newZoom, const QPoint & anchor)
 {
-    newZoom = qBound(kMinZoom, newZoom, kMaxZoom);
+    newZoom = qBound(fitZoom(), newZoom, kMaxZoom);
     if (qFuzzyCompare(newZoom, mZoom))
     {
         return;
@@ -466,6 +510,38 @@ void Laboratory::mouseReleaseEvent(QMouseEvent * event)
         return;
     }
     QOpenGLWidget::mouseReleaseEvent(event);
+}
+
+void Laboratory::showEvent(QShowEvent * event)
+{
+    QOpenGLWidget::showEvent(event);
+
+    if (!mViewportFilterInstalled)
+    {
+        if (QScrollArea * scrollArea = enclosingScrollArea())
+        {
+            scrollArea->viewport()->installEventFilter(this);
+            mViewportFilterInstalled = true;
+        }
+    }
+}
+
+bool Laboratory::eventFilter(QObject * watched, QEvent * event)
+{
+    if (event->type() == QEvent::Resize)
+    {
+        // The viewport just changed size, so the fit-to-window zoom floor
+        // (see fitZoom()) may have moved too. Re-apply the current zoom so
+        // it gets clamped back up to the new floor if it now falls under it
+        // - otherwise growing the window would leave the lab under-filling
+        // the viewport instead of covering it.
+        if (QScrollArea * scrollArea = enclosingScrollArea(); scrollArea && watched == scrollArea->viewport())
+        {
+            const QPoint anchor(scrollArea->viewport()->width() / 2, scrollArea->viewport()->height() / 2);
+            applyZoom(mZoom, anchor);
+        }
+    }
+    return QOpenGLWidget::eventFilter(watched, event);
 }
 
 void Laboratory::handleCanvasClicked(const QPoint & localPos)
@@ -620,7 +696,7 @@ void Laboratory::initActors()
         species->clear();
         if ( species->type() == Species::typeAnimal )
         {
-            species->initialize(1000, 10000, 900);
+            species->initialize(10, 10000, ANIMAL_INITIAL_ENERGY, species->isActive());
         }
         else if ( species->type() == Species::typePlant )
         {

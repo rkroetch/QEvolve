@@ -91,6 +91,7 @@ private:
     int mListIndex = -1;
     int mCellSlot = -1;
     uint mLastSpawnAge = 0;
+    int mLastPlantEatAge = -ANIMAL_MINIMUM_PLANT_RATE;
 
     Species * mSpecies = nullptr;
     //[Friends][Enemies]

@@ -26,6 +26,8 @@ class CalculationThread;
 class QScrollArea;
 class QWheelEvent;
 class QMouseEvent;
+class QShowEvent;
+class QEvent;
 
 struct PaintQuad
 {
@@ -80,6 +82,7 @@ public slots:
     void stop();
     void reset();
     void setPlantPattern(int pattern);
+    void setSpeciesActive(Species * species, bool active);
 
 signals:
     void plantPatternChanged(PlantPattern pattern);
@@ -93,6 +96,8 @@ protected:
     void mousePressEvent(QMouseEvent * event) override;
     void mouseMoveEvent(QMouseEvent * event) override;
     void mouseReleaseEvent(QMouseEvent * event) override;
+    void showEvent(QShowEvent * event) override;
+    bool eventFilter(QObject * watched, QEvent * event) override;
 
 private:
     QList<Species *> loadSpecies();
@@ -101,6 +106,13 @@ private:
     QScrollArea * enclosingScrollArea() const;
     void applyZoom(qreal newZoom, const QPoint & anchor);
     void handleCanvasClicked(const QPoint & localPos);
+    // The zoom level at which the whole lab grid fits inside the enclosing
+    // scroll area's current viewport with no scrolling required: whichever
+    // axis is more constraining ends up exactly filling that dimension of
+    // the viewport, and the other axis fits within it too, so nothing is
+    // left cropped/needing a scroll. Recomputed from the live viewport size
+    // rather than cached, since that size changes with the window.
+    qreal fitZoom() const;
 
 private:
     Ui::Laboratory *ui;
@@ -120,6 +132,8 @@ private:
 
     GLfloat mVertices[8 * 10000]{};
 
+    // Fallback floor used only when the widget isn't (yet) hosted in a
+    // scroll area to measure a viewport against - see fitZoom().
     static constexpr qreal kMinZoom = 0.5;
     static constexpr qreal kMaxZoom = 8.0;
     static constexpr qreal kDefaultZoom = 2.0;
@@ -133,6 +147,7 @@ private:
     static constexpr qreal kHitTestRadius = 1.5;
 
     qreal mZoom = kDefaultZoom;
+    bool mViewportFilterInstalled = false;
     bool mDragging = false;
     QPoint mDragStartMouse;
     QPoint mPressLocalPos;

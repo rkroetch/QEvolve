@@ -1,6 +1,8 @@
 #include "speciesbuttonlayoutwidget.h"
 
 #include <utility>
+#include <QCheckBox>
+#include <QHBoxLayout>
 #include "ui_speciesbuttonlayoutwidget.h"
 
 #include "editspeciesdialog.h"
@@ -48,20 +50,31 @@ void SpeciesButtonLayoutWidget::updateLayout()
 
     for ( int index = 0; index < mSpecies.size(); ++index )
     {
-        if ( mSpecies.at(index)->type() == Species::typePlant )
+        Species * species = mSpecies.at(index);
+        if ( species->type() == Species::typePlant )
         {
             continue;
         }
-        const QString & name = mSpecies.at(index)->name();
-        const QColor & color = mSpecies.at(index)->color();
+        const QString & name = species->name();
+        const QColor & color = species->color();
+
+        auto * checkBox = new QCheckBox(this);
+        checkBox->setChecked(species->isActive());
+        connect(checkBox, &QCheckBox::toggled, this, [this, species](bool checked) {
+            emit speciesActiveToggled(species, checked);
+        });
 
         auto *button = new SpeciesButtonWidget(name, color, this);
-        connect(mSpecies.at(index), SIGNAL(nameChanged(QString)),
+        connect(species, SIGNAL(nameChanged(QString)),
                 button, SLOT(setSpeciesName(QString)));
-        connect(mSpecies.at(index), SIGNAL(colorChanged(QColor)),
+        connect(species, SIGNAL(colorChanged(QColor)),
                 button, SLOT(setSpeciesColor(QColor)));
         connect(button, SIGNAL(clicked()), &mSignalMapper, SLOT(map()));
         mSignalMapper.setMapping(button, index);
-        ui->buttonLayout->addWidget(button);
+
+        auto * rowLayout = new QHBoxLayout();
+        rowLayout->addWidget(checkBox);
+        rowLayout->addWidget(button);
+        ui->buttonLayout->addLayout(rowLayout);
     }
 }
