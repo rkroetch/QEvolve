@@ -33,10 +33,14 @@ qt_add_executable(QEvolve WIN32 MACOSX_BUNDLE
     deatheffects.cpp deatheffects.h
     delay.h
     editspeciesdialog.cpp editspeciesdialog.h editspeciesdialog.ui
+    evolutionpoints.cpp evolutionpoints.h
+    hubdialog.cpp hubdialog.h
     laboratory.cpp laboratory.h laboratory.ui
     main.cpp
     mainwindow.cpp mainwindow.h mainwindow.ui
+    metaprogression.cpp metaprogression.h
     movementicons.cpp movementicons.h
+    runstate.h
     species.cpp species.h
     speciesbuttonlayoutwidget.cpp speciesbuttonlayoutwidget.h speciesbuttonlayoutwidget.ui
     speciesbuttonwidget.cpp speciesbuttonwidget.h
