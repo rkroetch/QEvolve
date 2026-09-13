@@ -29,12 +29,16 @@ add_executable(QEvolveTests
     ${CMAKE_SOURCE_DIR}/species.cpp ${CMAKE_SOURCE_DIR}/species.h
     ${CMAKE_SOURCE_DIR}/cycleconcurrent.h
     ${CMAKE_SOURCE_DIR}/runstate.h
+    ${CMAKE_SOURCE_DIR}/evolutionpoints.cpp ${CMAKE_SOURCE_DIR}/evolutionpoints.h
+    ${CMAKE_SOURCE_DIR}/metaprogression.cpp ${CMAKE_SOURCE_DIR}/metaprogression.h
     common_test.cpp
     animal_test.cpp
     species_test.cpp
     cycleconcurrent_test.cpp
     runstate_test.cpp
     difficultycurve_test.cpp
+    evolutionpoints_test.cpp
+    metaprogression_test.cpp
 )
 set_target_properties(QEvolveTests PROPERTIES AUTOMOC ON)
 target_include_directories(QEvolveTests PRIVATE ${CMAKE_SOURCE_DIR})
