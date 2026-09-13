@@ -25,6 +25,7 @@ add_executable(QEvolveTests
     ${CMAKE_SOURCE_DIR}/animal.cpp ${CMAKE_SOURCE_DIR}/animal.h
     ${CMAKE_SOURCE_DIR}/common.h
     ${CMAKE_SOURCE_DIR}/deatheffects.cpp ${CMAKE_SOURCE_DIR}/deatheffects.h
+    ${CMAKE_SOURCE_DIR}/difficultycurve.cpp ${CMAKE_SOURCE_DIR}/difficultycurve.h
     ${CMAKE_SOURCE_DIR}/species.cpp ${CMAKE_SOURCE_DIR}/species.h
     ${CMAKE_SOURCE_DIR}/cycleconcurrent.h
     ${CMAKE_SOURCE_DIR}/runstate.h
@@ -33,6 +34,7 @@ add_executable(QEvolveTests
     species_test.cpp
     cycleconcurrent_test.cpp
     runstate_test.cpp
+    difficultycurve_test.cpp
 )
 set_target_properties(QEvolveTests PROPERTIES AUTOMOC ON)
 target_include_directories(QEvolveTests PRIVATE ${CMAKE_SOURCE_DIR})

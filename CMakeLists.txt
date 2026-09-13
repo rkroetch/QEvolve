@@ -32,11 +32,13 @@ qt_add_executable(QEvolve WIN32 MACOSX_BUNDLE
     common.h
     deatheffects.cpp deatheffects.h
     delay.h
+    difficultycurve.cpp difficultycurve.h
     editspeciesdialog.cpp editspeciesdialog.h editspeciesdialog.ui
     laboratory.cpp laboratory.h laboratory.ui
     main.cpp
     mainwindow.cpp mainwindow.h mainwindow.ui
     movementicons.cpp movementicons.h
+    runstate.h
     species.cpp species.h
     speciesbuttonlayoutwidget.cpp speciesbuttonlayoutwidget.h speciesbuttonlayoutwidget.ui
     speciesbuttonwidget.cpp speciesbuttonwidget.h
