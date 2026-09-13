@@ -103,7 +103,7 @@ Laboratory::Laboratory(QWidget *parent) :
     initActors();
 
     mAdvanceTimer.setInterval(20);
-    connect(&mAdvanceTimer, &QTimer::timeout, this, QOverload<>::of(&Laboratory::update));
+    connect(&mAdvanceTimer, &QTimer::timeout, this, &Laboratory::onAdvanceTick);
 }
 
 Laboratory::~Laboratory()
@@ -222,8 +222,124 @@ void Laboratory::stop()
 void Laboratory::reset()
 {
     stop();
+    // Always drop back to a clean sandbox, whether or not a run was active -
+    // the toolbar's Reset action shouldn't leave stale run state behind.
+    mRunModeActive = false;
+    mRunOutcome = RunOutcome::InProgress;
+    mCurrentEpoch = 0;
+    mRunTicks = 0;
     initActors();
     update();
+}
+
+void Laboratory::beginRun(const RunConfig & config)
+{
+    if (!config.playerSpecies || config.playerSpecies->type() != Species::typeAnimal)
+    {
+        qWarning() << "Laboratory::beginRun() requires a valid animal player species";
+        return;
+    }
+    if (!mSpecies.contains(config.playerSpecies))
+    {
+        qWarning() << "Laboratory::beginRun() playerSpecies is not one of this lab's species()";
+        return;
+    }
+
+    stop();
+    mRunConfig = config;
+    mRunModeActive = true;
+    mRunOutcome = RunOutcome::InProgress;
+    mCurrentEpoch = 0;
+    mRunTicks = 0;
+    initActors();
+    mRunStartTickBaseline = mCalculationThread->totalCycles();
+    start();
+}
+
+void Laboratory::endRun()
+{
+    if (!mRunModeActive || mRunOutcome != RunOutcome::InProgress)
+    {
+        return;
+    }
+    finishRun(RunOutcome::Lost);
+}
+
+void Laboratory::onAdvanceTick()
+{
+    if (mRunModeActive)
+    {
+        updateRunState();
+    }
+    update();
+}
+
+void Laboratory::updateRunState()
+{
+    if (mRunOutcome != RunOutcome::InProgress)
+    {
+        return;
+    }
+
+    const qint64 elapsedTicks = mCalculationThread->totalCycles() - mRunStartTickBaseline;
+    mRunTicks = qMax<qint64>(0, elapsedTicks);
+
+    const int epoch = computeEpoch(mRunTicks, mRunConfig.ticksPerEpoch);
+    if (epoch > mCurrentEpoch)
+    {
+        mCurrentEpoch = epoch;
+        emit epochAdvanced(mCurrentEpoch);
+    }
+
+    bool playerExtinct = false;
+    {
+        QReadLocker locker(&positionLock);
+        playerExtinct = mRunConfig.playerSpecies->animals().isEmpty();
+    }
+
+    const RunOutcome outcome = evaluateRunOutcome(playerExtinct, mCurrentEpoch, mRunConfig.targetEpochs);
+    if (outcome != RunOutcome::InProgress)
+    {
+        finishRun(outcome);
+    }
+}
+
+void Laboratory::finishRun(RunOutcome outcome)
+{
+    mRunOutcome = outcome;
+    const RunResult result = buildRunResult(outcome);
+    stop();
+    emit runEnded(result);
+}
+
+RunResult Laboratory::buildRunResult(RunOutcome outcome) const
+{
+    RunResult result;
+    result.outcome = outcome;
+    result.epochsCleared = mCurrentEpoch;
+    result.ticksSurvived = mRunTicks;
+
+    QReadLocker locker(&positionLock);
+    for (Species * species : mSpecies)
+    {
+        if (species->type() != Species::typeAnimal)
+        {
+            continue;
+        }
+
+        SpeciesRunStats stats;
+        stats.name = species->name();
+        const QVector<Animal*> & animals = species->animals();
+        stats.finalPopulation = int(animals.size());
+        for (const Animal * animal : animals)
+        {
+            const Animal::Statistics & animalStats = animal->statistics();
+            stats.highestGeneration = qMax(stats.highestGeneration, animalStats.mGeneration);
+            stats.totalChildren += animalStats.mNumChildren;
+        }
+        result.speciesStats.append(stats);
+    }
+    return result;
 }
 
 void Laboratory::setSpeciesActive(Species * species, bool active)
@@ -756,6 +872,12 @@ double CalculationThread::cyclesPerSecond()
         return 0.0;
     }
     return double(numCycles) / (elapsedMs / 1000.0);
+}
+
+qint64 CalculationThread::totalCycles() const
+{
+    QMutexLocker locker(&mDataMutex);
+    return mNumCycles;
 }
 
 void CalculationThread::stop()

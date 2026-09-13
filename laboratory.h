@@ -19,6 +19,7 @@
 
 #include <gl/GL.h>
 #include "common.h"
+#include "runstate.h"
 
 class Animal;
 class Species;
@@ -74,6 +75,19 @@ public:
 
     PlantPattern plantPattern() const { return mSettings.plantPattern; }
 
+    // --- Run mode (Phase 0: Run-Loop Engineer) ---
+    // Sandbox mode (the default, unchanged from before) has no epochs and no
+    // win/lose: isRunModeActive() stays false and none of the accessors
+    // below advance. beginRun() switches into a bounded run; reset() (the
+    // existing sandbox "Reset" action) drops back out of run mode, so the
+    // toolbar's Reset always returns to a clean sandbox regardless of state.
+    bool isRunModeActive() const { return mRunModeActive; }
+    RunOutcome runOutcome() const { return mRunOutcome; }
+    int currentEpoch() const { return mCurrentEpoch; }
+    int targetEpochs() const { return mRunConfig.targetEpochs; }
+    qint64 runTicks() const { return mRunTicks; }
+    Species * playerSpecies() const { return mRunConfig.playerSpecies; }
+
 public slots:
     //0 being fastest
     void setSpeed(int speed) { mSpeed.storeRelaxed(speed); }
@@ -84,8 +98,23 @@ public slots:
     void setPlantPattern(int pattern);
     void setSpeciesActive(Species * species, bool active);
 
+    // Resets the lab and starts a bounded, tick-based run against config.
+    // config.playerSpecies must already be one of species() and must be a
+    // typeAnimal species. No-op (with a warning) otherwise.
+    void beginRun(const RunConfig & config);
+    // Ends the run early (e.g. player backs out to the hub mid-run) as a
+    // loss if it was still in progress; does nothing in sandbox mode.
+    void endRun();
+
 signals:
     void plantPatternChanged(PlantPattern pattern);
+    // Fired once per epoch boundary while a run is active, on the main
+    // thread. Consumers (difficulty scaling, HUD) can read currentEpoch()
+    // from within the slot.
+    void epochAdvanced(int epoch);
+    // Fired exactly once when a run concludes (win or loss). The lab is
+    // already stopped by the time this fires.
+    void runEnded(RunResult result);
 
 protected:
     void initializeGL() override;
@@ -102,10 +131,21 @@ protected:
 private:
     QList<Species *> loadSpecies();
     void initActors();
+    // mAdvanceTimer's timeout target: drives run-state polling (if a run is
+    // active) then repaints, replacing the old direct connect to update().
+    void onAdvanceTick();
     QColor colorForIndex(int index) const;
     QScrollArea * enclosingScrollArea() const;
     void applyZoom(qreal newZoom, const QPoint & anchor);
     void handleCanvasClicked(const QPoint & localPos);
+
+    // Polled every mAdvanceTimer tick (20ms, main thread) while a run is
+    // active: advances the epoch counter from elapsed simulation ticks and
+    // checks the win/lose conditions. A no-op in sandbox mode.
+    void updateRunState();
+    void finishRun(RunOutcome outcome);
+    RunResult buildRunResult(RunOutcome outcome) const;
+
     // The zoom level at which the whole lab grid fits inside the enclosing
     // scroll area's current viewport with no scrolling required: whichever
     // axis is more constraining ends up exactly filling that dimension of
@@ -129,6 +169,18 @@ private:
     QVector<DeathEffectAnim> mDeathEffects;
     QAtomicInteger<int> mCachedNumAnimals = 0;
     QString mCachedStatistics;
+
+    // --- Run mode state (Phase 0) ---
+    RunConfig mRunConfig;
+    bool mRunModeActive = false;
+    RunOutcome mRunOutcome = RunOutcome::InProgress;
+    int mCurrentEpoch = 0;
+    qint64 mRunTicks = 0;
+    // CalculationThread::totalCycles() value at beginRun(); mRunTicks is
+    // measured relative to this so ticksSurvived starts at 0 per run rather
+    // than carrying over the cumulative cycle count from sandbox mode or an
+    // earlier run in the same session.
+    qint64 mRunStartTickBaseline = 0;
 
     GLfloat mVertices[8 * 10000]{};
 
@@ -161,13 +213,17 @@ public:
     explicit CalculationThread(Laboratory * laboratory, QObject * parent = nullptr);
 
     double cyclesPerSecond();
+    // Thread-safe cumulative simulation cycle count, for Laboratory's
+    // run-mode tick/epoch tracking (see updateRunState()). Unlike
+    // cyclesPerSecond(), this doesn't reset anything on read.
+    qint64 totalCycles() const;
     void stop();
     void run() override;
 
 private:
     Laboratory * mLaboratory;
     std::atomic<bool> mStop{false};
-    QMutex mDataMutex;
+    mutable QMutex mDataMutex;
     QVector<Animal *> mCalcAnimals;
     qint64 mNumCycles = 0;
     qint64 mLastNumCycles = 0;
