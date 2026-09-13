@@ -228,6 +228,8 @@ void Laboratory::reset()
     mRunOutcome = RunOutcome::InProgress;
     mCurrentEpoch = 0;
     mRunTicks = 0;
+    mMetabolismSurgeBaseline.clear();
+    mMetabolismSurgeEpochsRemaining = 0;
     initActors();
     update();
 }
@@ -251,6 +253,8 @@ void Laboratory::beginRun(const RunConfig & config)
     mRunOutcome = RunOutcome::InProgress;
     mCurrentEpoch = 0;
     mRunTicks = 0;
+    mMetabolismSurgeBaseline.clear();
+    mMetabolismSurgeEpochsRemaining = 0;
     initActors();
     mRunStartTickBaseline = mCalculationThread->totalCycles();
     start();
@@ -284,11 +288,18 @@ void Laboratory::updateRunState()
     const qint64 elapsedTicks = mCalculationThread->totalCycles() - mRunStartTickBaseline;
     mRunTicks = qMax<qint64>(0, elapsedTicks);
 
+    // Looping (rather than jumping straight to the new epoch) matters when a
+    // poll spans more than one epoch boundary (e.g. running at high sim
+    // speed): every intermediate epoch still gets its epochAdvanced() signal
+    // and EncounterSpec applied, so a rival/hazard introduction can never be
+    // silently skipped.
     const int epoch = computeEpoch(mRunTicks, mRunConfig.ticksPerEpoch);
-    if (epoch > mCurrentEpoch)
+    while (mCurrentEpoch < epoch)
     {
-        mCurrentEpoch = epoch;
+        ++mCurrentEpoch;
         emit epochAdvanced(mCurrentEpoch);
+        advanceHazards();
+        applyEncounterSpec(computeEncounterSpec(mCurrentEpoch, mRunConfig.metaTier));
     }
 
     bool playerExtinct = false;
@@ -340,6 +351,136 @@ RunResult Laboratory::buildRunResult(RunOutcome outcome) const
         result.speciesStats.append(stats);
     }
     return result;
+}
+
+void Laboratory::applyEncounterSpec(const EncounterSpec & spec)
+{
+    positionLock.lockForWrite();
+
+    for (const RivalSpawn & rival : spec.rivals)
+    {
+        Species * target = nullptr;
+        for (Species * species : qAsConst(mSpecies))
+        {
+            if (species->type() == Species::typeAnimal &&
+                species->name().compare(rival.archetype, Qt::CaseInsensitive) == 0)
+            {
+                target = species;
+                break;
+            }
+        }
+        if (!target)
+        {
+            qWarning() << "Difficulty curve requested unknown rival archetype:" << rival.archetype;
+            continue;
+        }
+
+        if (!target->isActive())
+        {
+            target->activate();
+        }
+
+        // Scale the archetype's stock stats by rivalStatMultiplier rather
+        // than mutating the species' own SpeciesUserData (spawnAnimal takes
+        // spawning-energy/metabolism per-call), so its .SPC-defined baseline
+        // stays intact for animals spawned in later, less-escalated epochs.
+        const int spawningEnergy = qMax(1, int(target->spawningEnergy() * spec.rivalStatMultiplier));
+        const int metabolism = qMax(1, int(target->metabolism() * spec.rivalStatMultiplier));
+        for (int i = 0; i < rival.count; ++i)
+        {
+            const QPointF pos(randIntInclusive(5, LABORATORY_WIDTH - 5), randIntInclusive(5, LABORATORY_HEIGHT - 5));
+            target->spawnAnimal(pos, ANIMAL_INITIAL_ENERGY, spawningEnergy, metabolism, target->movements(), QPointF(0, 0), nullptr);
+        }
+    }
+
+    if (Species * plants = Species::plantSpecies())
+    {
+        plants->setSpawningEnergy(qMax(1, int(PLANT_SPAWN_ENERGY * spec.plantSpawnEnergyMultiplier)));
+    }
+
+    positionLock.unlock();
+
+    if (spec.hazard.type != HazardType::None && randDouble01() < spec.hazard.chance)
+    {
+        triggerHazard(spec.hazard);
+    }
+}
+
+void Laboratory::triggerHazard(const HazardEvent & hazard)
+{
+    switch (hazard.type)
+    {
+    case HazardType::None:
+        break;
+
+    case HazardType::MetabolismSurge:
+    {
+        // One surge at a time: a re-roll while one is already active just
+        // refreshes its remaining duration rather than compounding the
+        // multiplier on top of an already-elevated baseline.
+        positionLock.lockForWrite();
+        if (mMetabolismSurgeBaseline.isEmpty())
+        {
+            for (Species * species : qAsConst(mSpecies))
+            {
+                if (species->type() == Species::typeAnimal)
+                {
+                    mMetabolismSurgeBaseline.insert(species, species->metabolism());
+                    species->setMetabolism(qMax(1, int(species->metabolism() * (1.0 + hazard.magnitude))));
+                }
+            }
+        }
+        positionLock.unlock();
+        mMetabolismSurgeEpochsRemaining = qMax(mMetabolismSurgeEpochsRemaining, hazard.durationEpochs);
+        break;
+    }
+
+    case HazardType::PlantDieOff:
+    {
+        positionLock.lockForWrite();
+        if (Species * plants = Species::plantSpecies())
+        {
+            const QVector<Animal *> snapshot = plants->animals();
+            const int cullCount = int(snapshot.size() * qBound(0.0, hazard.magnitude, 1.0));
+            for (int i = 0; i < cullCount; ++i)
+            {
+                plants->killAnimal(snapshot[i]->cellX(), snapshot[i]->cellY(), snapshot[i]);
+            }
+        }
+        positionLock.unlock();
+        break;
+    }
+
+    case HazardType::ResourceBloom:
+    {
+        positionLock.lockForWrite();
+        if (Species * plants = Species::plantSpecies())
+        {
+            plants->respawn(int(MAX_NUM_PLANTS * qBound(0.0, hazard.magnitude, 1.0)), PLANT_INITIAL_ENERGY);
+        }
+        positionLock.unlock();
+        break;
+    }
+    }
+}
+
+void Laboratory::advanceHazards()
+{
+    if (mMetabolismSurgeEpochsRemaining <= 0)
+    {
+        return;
+    }
+
+    if (--mMetabolismSurgeEpochsRemaining == 0)
+    {
+        positionLock.lockForWrite();
+        for (auto it = mMetabolismSurgeBaseline.constBegin(); it != mMetabolismSurgeBaseline.constEnd(); ++it)
+        {
+            it.key()->setMetabolism(it.value());
+        }
+        mMetabolismSurgeBaseline.clear();
+        positionLock.unlock();
+    }
 }
 
 void Laboratory::setSpeciesActive(Species * species, bool active)

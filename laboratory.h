@@ -9,6 +9,7 @@
 #include <QFuture>
 #include <QReadWriteLock>
 #include <QMutex>
+#include <QHash>
 #include <QThread>
 #include <QVector>
 #include <QAtomicInteger>
@@ -20,6 +21,7 @@
 #include <gl/GL.h>
 #include "common.h"
 #include "runstate.h"
+#include "difficultycurve.h"
 
 class Animal;
 class Species;
@@ -146,6 +148,17 @@ private:
     void finishRun(RunOutcome outcome);
     RunResult buildRunResult(RunOutcome outcome) const;
 
+    // Applies one epoch's EncounterSpec (see difficultycurve.h): activates/
+    // spawns any newly-introduced rival archetypes, retunes plant scarcity,
+    // and rolls the epoch's hazard chance. Called once per epoch boundary
+    // from updateRunState(), after epochAdvanced() is emitted for that epoch.
+    void applyEncounterSpec(const EncounterSpec & spec);
+    // Applies a hazard that won its chance roll in applyEncounterSpec().
+    void triggerHazard(const HazardEvent & hazard);
+    // Ticks down/reverts an in-progress MetabolismSurge hazard. Called once
+    // per epoch boundary, before that epoch's new EncounterSpec is applied.
+    void advanceHazards();
+
     // The zoom level at which the whole lab grid fits inside the enclosing
     // scroll area's current viewport with no scrolling required: whichever
     // axis is more constraining ends up exactly filling that dimension of
@@ -181,6 +194,13 @@ private:
     // than carrying over the cumulative cycle count from sandbox mode or an
     // earlier run in the same session.
     qint64 mRunStartTickBaseline = 0;
+
+    // --- Hazard state (Phase 1.5 integration: difficulty curve -> Laboratory) ---
+    // Baseline metabolism captured for every active animal species when a
+    // MetabolismSurge hazard fires, so it can be restored exactly once the
+    // surge's durationEpochs elapses. Empty when no surge is active.
+    QHash<Species *, int> mMetabolismSurgeBaseline;
+    int mMetabolismSurgeEpochsRemaining = 0;
 
     GLfloat mVertices[8 * 10000]{};
 

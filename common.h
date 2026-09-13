@@ -92,6 +92,15 @@ inline int randIntInclusive(int lo, int hi)
     return dist(threadRng());
 }
 
+// Uniform double in [0, 1) - used for probability rolls (e.g. hazard chance
+// in EncounterSpec::hazard, see difficultycurve.h) rather than pass/fail
+// integer thresholds.
+inline double randDouble01()
+{
+    std::uniform_real_distribution<double> dist(0.0, 1.0);
+    return dist(threadRng());
+}
+
 // Picks a spawn position for a new plant according to the given pattern.
 // "One group" clusters plants in a single region near the center; "two
 // groups" clusters them into two separate regions (left/right); "random"

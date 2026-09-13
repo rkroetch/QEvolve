@@ -34,6 +34,11 @@ struct RunConfig
     // for the difficulty/encounter designer to tune against real playtests.
     qint64 ticksPerEpoch = 10000;
     int targetEpochs = 10;
+    // Meta-ascension tier this run starts at (see computeMetaTier() in
+    // difficultycurve.h) - 0 is a fresh, unascended run. Owned by the
+    // meta-progression workstream; the run-loop just forwards it to
+    // computeEncounterSpec() each epoch.
+    int metaTier = 0;
 };
 
 // A snapshot of one animal species' standing at the moment a run ended.
