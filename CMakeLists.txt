@@ -41,6 +41,9 @@ qt_add_executable(QEvolve WIN32 MACOSX_BUNDLE
     mainwindow.cpp mainwindow.h mainwindow.ui
     metaprogression.cpp metaprogression.h
     movementicons.cpp movementicons.h
+    mutationchoice.cpp mutationchoice.h
+    mutationchoicedialog.cpp mutationchoicedialog.h
+    runresultdialog.cpp runresultdialog.h
     runstate.h
     species.cpp species.h
     speciesbuttonlayoutwidget.cpp speciesbuttonlayoutwidget.h speciesbuttonlayoutwidget.ui

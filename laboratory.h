@@ -182,6 +182,14 @@ private:
     QVector<DeathEffectAnim> mDeathEffects;
     QAtomicInteger<int> mCachedNumAnimals = 0;
     QString mCachedStatistics;
+    // Player species population as of the last captureFrame() call, guarded
+    // by mPaintMutex like mCachedNumAnimals/mCachedStatistics above.
+    // updateRunState()'s playerExtinct check reads this instead of taking a
+    // fresh positionLock read-lock on the main thread every tick - see the
+    // long comment on captureFrame()'s player-population tracking in
+    // laboratory.cpp for why a direct positionLock read from the main
+    // thread here is unsafe.
+    int mCachedPlayerAnimalCount = 0;
 
     // --- Run mode state (Phase 0) ---
     RunConfig mRunConfig;

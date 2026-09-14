@@ -31,6 +31,7 @@ add_executable(QEvolveTests
     ${CMAKE_SOURCE_DIR}/runstate.h
     ${CMAKE_SOURCE_DIR}/evolutionpoints.cpp ${CMAKE_SOURCE_DIR}/evolutionpoints.h
     ${CMAKE_SOURCE_DIR}/metaprogression.cpp ${CMAKE_SOURCE_DIR}/metaprogression.h
+    ${CMAKE_SOURCE_DIR}/mutationchoice.cpp ${CMAKE_SOURCE_DIR}/mutationchoice.h
     common_test.cpp
     animal_test.cpp
     species_test.cpp
@@ -39,6 +40,7 @@ add_executable(QEvolveTests
     difficultycurve_test.cpp
     evolutionpoints_test.cpp
     metaprogression_test.cpp
+    mutationchoice_test.cpp
 )
 set_target_properties(QEvolveTests PROPERTIES AUTOMOC ON)
 target_include_directories(QEvolveTests PRIVATE ${CMAKE_SOURCE_DIR})

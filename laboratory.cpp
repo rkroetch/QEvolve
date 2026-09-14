@@ -143,6 +143,15 @@ void Laboratory::captureFrame()
     QVector<PaintQuad> quads;
     QString stats;
     int numAnimals = 0;
+    // Player species population for updateRunState()'s playerExtinct check
+    // (see mCachedPlayerAnimalCount's declaration in laboratory.h). Captured
+    // here, alongside the other mPaintMutex-guarded snapshots below, rather
+    // than having updateRunState() take its own positionLock read-lock on
+    // the main thread: captureFrame() always runs already inside a
+    // positionLock write-lock section (see the callers of this function),
+    // so this read of species->animals() is already safe without any
+    // further locking here.
+    int playerAnimalCount = 0;
     for (const Species * species : qAsConst(mSpecies))
     {
         const QColor color = species->color();
@@ -157,6 +166,10 @@ void Laboratory::captureFrame()
         if (species->type() == Species::typeAnimal)
         {
             numAnimals += int(animals.size());
+        }
+        if (species == mRunConfig.playerSpecies)
+        {
+            playerAnimalCount = int(animals.size());
         }
         stats += species->statistics();
         for (const Animal * animal : animals)
@@ -177,6 +190,7 @@ void Laboratory::captureFrame()
     mPaintSnapshot.swap(quads);
     mCachedStatistics = stats;
     mCachedNumAnimals.storeRelaxed(numAnimals);
+    mCachedPlayerAnimalCount = playerAnimalCount;
 
     if (!deaths.isEmpty())
     {
@@ -302,10 +316,19 @@ void Laboratory::updateRunState()
         applyEncounterSpec(computeEncounterSpec(mCurrentEpoch, mRunConfig.metaTier));
     }
 
+    // Read the player's last-captured population instead of taking a fresh
+    // positionLock read-lock here: this used to be `QReadLocker
+    // locker(&positionLock); playerExtinct =
+    // mRunConfig.playerSpecies->animals().isEmpty();`, but that races
+    // CalculationThread's own positionLock usage - see the crash writeup in
+    // the commit that introduced mCachedPlayerAnimalCount for the full
+    // root-cause analysis. mPaintMutex is the same, already-safe mechanism
+    // numAnimals()/statistics() use for exactly this kind of cross-thread
+    // polling from the main thread.
     bool playerExtinct = false;
     {
-        QReadLocker locker(&positionLock);
-        playerExtinct = mRunConfig.playerSpecies->animals().isEmpty();
+        QMutexLocker locker(&mPaintMutex);
+        playerExtinct = (mCachedPlayerAnimalCount == 0);
     }
 
     const RunOutcome outcome = evaluateRunOutcome(playerExtinct, mCurrentEpoch, mRunConfig.targetEpochs);
@@ -318,8 +341,15 @@ void Laboratory::updateRunState()
 void Laboratory::finishRun(RunOutcome outcome)
 {
     mRunOutcome = outcome;
-    const RunResult result = buildRunResult(outcome);
+    // Stop CalculationThread *before* reading species/animal data below:
+    // buildRunResult() takes its own positionLock read-lock on the main
+    // thread (see below), and doing that while CalculationThread might
+    // still be mid-cycle on another thread is exactly the cross-thread
+    // positionLock contention that crashes inside Qt's QReadWriteLock (see
+    // mCachedPlayerAnimalCount's declaration in laboratory.h for the fuller
+    // writeup) - this call order used to be reversed.
     stop();
+    const RunResult result = buildRunResult(outcome);
     emit runEnded(result);
 }
 
