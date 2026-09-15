@@ -113,6 +113,38 @@ if(QEVOLVE_BUILD_BENCHMARKS)
 endif()
 
 
+# Headless Phase 3 balance simulator (see benchmarks/balance_simulator.cpp):
+# plays out many full simulated runs against the real Species/Animal
+# simulation core and reports win-rate/epoch/EP distributions, so difficulty-
+# curve and EP-economy tuning can be checked against real simulated data
+# instead of by-eye guesses. On by default alongside the other benchmark/test
+# targets; set to OFF to skip.
+option(QEVOLVE_BUILD_BALANCE_SIM "Build the headless Phase 3 balance simulator" ON)
+if(QEVOLVE_BUILD_BALANCE_SIM)
+    add_executable(QEvolveBalanceSim
+        animal.cpp animal.h
+        common.h
+        deatheffects.cpp deatheffects.h
+        difficultycurve.cpp difficultycurve.h
+        evolutionpoints.cpp evolutionpoints.h
+        runstate.h
+        species.cpp species.h
+        benchmarks/balance_simulator.cpp
+    )
+    set_target_properties(QEvolveBalanceSim PROPERTIES AUTOMOC ON)
+    target_include_directories(QEvolveBalanceSim PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_compile_definitions(QEvolveBalanceSim PRIVATE
+        NOMINMAX
+        _USE_MATH_DEFINES
+        QEVOLVE_SPECIES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/species"
+    )
+    target_link_libraries(QEvolveBalanceSim PRIVATE
+        Qt::Core
+        Qt::Gui
+    )
+endif()
+
+
 # Google Test unit tests for the simulation core (Movements/Animal/Species)
 # and the CycleConcurrent threading backend. On by default, so QEvolveTests
 # builds as part of ALL_BUILD like every other target; set to OFF to skip

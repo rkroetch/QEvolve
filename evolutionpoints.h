@@ -14,6 +14,24 @@
 // Kept as a separate, default-constructible struct so callers (tests, the
 // hub UI, a future difficulty-scaling system) can tune or preview payouts
 // without touching the formula itself.
+//
+// Phase 3 balance pass: these defaults were checked (not just guessed)
+// against benchmarks/balance_simulator.cpp's simulated data and left
+// unchanged. With the retuned difficulty curve (see difficultycurve.cpp),
+// the free/default starting kit (RABBITS) earns ~450-580 EP/run on
+// average; the cheapest metaprogression.cpp unlocks (50-150 EP) are
+// affordable in under a run, and unlocking every catalog entry costs
+// ~5700 EP total - roughly 11-12 runs, a reasonable "sustained play"
+// target for a small-scope roguelike. See the balance-pass commit message
+// for the full numbers. One caveat worth flagging: perFinalPopulation
+// below sums RunResult::speciesStats across every tracked animal species,
+// which in practice (see Laboratory::buildRunResult()) is every bestiary
+// species, not just the player's - a run with a large rival population at
+// the end earns more EP from this term than an identical run against
+// weaker rivals, independent of the player's own performance. Not fixed
+// in this pass (RunResult has no player-species marker to filter on
+// without a struct-shape change, out of scope here) - flagged for a
+// follow-up.
 struct EvolutionPointsWeights
 {
     // EP awarded per epoch fully cleared.

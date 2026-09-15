@@ -29,10 +29,22 @@ struct RunConfig
 {
     Species * playerSpecies = nullptr;
     // Default epoch length, in simulation ticks (CalculationThread cycles,
-    // not wall-clock time - see Laboratory::beginRun()). 10000 was chosen
-    // per design direction that 500 was far too short; still a placeholder
-    // for the difficulty/encounter designer to tune against real playtests.
-    qint64 ticksPerEpoch = 10000;
+    // not wall-clock time - see Laboratory::beginRun()). Retuned to 800 in
+    // the Phase 3 balancing pass, using benchmarks/balance_simulator.cpp's
+    // simulated data: the original 10000 let a starting population balloon
+    // to 2000-3000+ individuals before epoch 10 (100000 ticks) even at the
+    // free default kit, with each simulated run taking ~60s of wall time to
+    // play out - both far past what's needed for meaningful reproduction/
+    // combat dynamics between epoch boundaries. 800 keeps a full 10-epoch
+    // run in the ~5000-8000 simulated-tick range (a few seconds each in the
+    // simulator; a couple of real-time minutes at the app's normal sim
+    // speed), while still giving each epoch enough ticks for several
+    // generations of reproduction and for newly-introduced rival packs to
+    // cluster and threaten the player. 500 was rejected in an earlier
+    // design pass as "far too short"; 800 is close to that floor but was
+    // validated (not just guessed) against real simulated runs - see the
+    // Phase 3 balance-pass commit message for the actual win-rate numbers.
+    qint64 ticksPerEpoch = 800;
     int targetEpochs = 10;
     // Meta-ascension tier this run starts at (see computeMetaTier() in
     // difficultycurve.h) - 0 is a fresh, unascended run. Owned by the

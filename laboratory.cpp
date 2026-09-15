@@ -269,6 +269,35 @@ void Laboratory::beginRun(const RunConfig & config)
     mRunTicks = 0;
     mMetabolismSurgeBaseline.clear();
     mMetabolismSurgeEpochsRemaining = 0;
+
+    // A run starts with only the player's species active - every other
+    // animal archetype comes online on the difficulty curve's own schedule
+    // via applyEncounterSpec()'s activate() calls (see difficultycurve.cpp).
+    // Without this, every bestiary species is active by default (sandbox
+    // mode's usual state) and initActors() below would spawn the player
+    // into a map already swarming with all of them from tick 0, ignoring
+    // the scripted escalation entirely - a real gap found by the Phase 3
+    // balance pass (its report predicted this from simulated data; the
+    // fix - controlling the roster here - is out of that pass's scope
+    // since it's a Laboratory wiring change, not a numeric one).
+    positionLock.lockForWrite();
+    for (Species * species : qAsConst(mSpecies))
+    {
+        if (species->type() != Species::typeAnimal)
+        {
+            continue;
+        }
+        if (species == config.playerSpecies)
+        {
+            species->activate();
+        }
+        else
+        {
+            species->deactivate();
+        }
+    }
+    positionLock.unlock();
+
     initActors();
     mRunStartTickBaseline = mCalculationThread->totalCycles();
     start();
@@ -426,6 +455,22 @@ void Laboratory::applyEncounterSpec(const EncounterSpec & spec)
     if (Species * plants = Species::plantSpecies())
     {
         plants->setSpawningEnergy(qMax(1, int(PLANT_SPAWN_ENERGY * spec.plantSpawnEnergyMultiplier)));
+
+        // plantCapMultiplier was computed by the difficulty curve but never
+        // actually applied anywhere - a real integration gap flagged by the
+        // Phase 3 balance pass. Species::mMaximumAnimals (the real
+        // ceiling on plant population) is fixed at initActors() time and
+        // can't shrink without reinitializing the species, which would
+        // wipe the existing plant population - so enforce the epoch's
+        // scaled-down cap here instead as a soft ceiling, culling any
+        // excess the same way triggerHazard()'s PlantDieOff does.
+        const int cap = qMax(1, int(MAX_NUM_PLANTS * spec.plantCapMultiplier));
+        const QVector<Animal *> plantSnapshot = plants->animals();
+        const int cullCount = plantSnapshot.size() - cap;
+        for (int i = 0; i < cullCount; ++i)
+        {
+            plants->killAnimal(plantSnapshot[i]->cellX(), plantSnapshot[i]->cellY(), plantSnapshot[i]);
+        }
     }
 
     positionLock.unlock();

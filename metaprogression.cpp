@@ -36,6 +36,15 @@ MetaProgression::MetaProgression(QObject * parent, const QString & settingsGroup
 
 void MetaProgression::registerDefaultCatalog()
 {
+    // Phase 3 balance pass: catalog costs below were checked (not just
+    // guessed) against benchmarks/balance_simulator.cpp's simulated EP
+    // income for the free/default starting kit (~450-580 EP/run with the
+    // retuned difficulty curve - see difficultycurve.cpp and the
+    // balance-pass commit message) and left unchanged: the cheapest
+    // entries (50-150 EP) are affordable in under a run, and unlocking
+    // every entry in this catalog totals ~5700 EP (~11-12 runs) - already
+    // a reasonable "cheap stuff fast, everything eventually" curve without
+    // needing adjustment.
     mCatalog.clear();
 
     // --- Starting species presets -----------------------------------

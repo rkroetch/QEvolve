@@ -109,7 +109,12 @@ private:
 
     Species * mSelectedSpecies = nullptr;
     PlantPattern mSelectedBiome = plantPatternOneGroup;
-    qint64 mTicksPerEpoch = 10000;
+    // Tracks RunConfig's own default rather than duplicating a literal here
+    // - RunConfig{}.ticksPerEpoch is the single source of truth for epoch
+    // pacing (see runstate.h; a prior hardcoded 10000 here silently drifted
+    // out of sync when that default was retuned to 800 in the Phase 3
+    // balance pass, so every hub-started run ignored the retuned pacing).
+    qint64 mTicksPerEpoch = RunConfig().ticksPerEpoch;
     bool mRunRequested = false;
 };
 
