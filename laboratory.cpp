@@ -5,13 +5,6 @@
 #include "delay.h"
 #include "deatheffects.h"
 
-#include <gl/GLU.h>
-#include <gl/GL.h>
-//#include <GL/glext.h>
-#include "glext.h"
-
-#include <Windows.h>
-
 #include <QSettings>
 #include <QPainter>
 #include <QRectF>
@@ -34,6 +27,9 @@
 #include <QMouseEvent>
 #include <QShowEvent>
 #include <QCursor>
+#include <QOpenGLFramebufferObject>
+#include <QOpenGLShaderProgram>
+#include <QVector2D>
 #include "animalinfodialog.h"
 
 #include "cycleconcurrent.h"
@@ -65,6 +61,129 @@ QReadWriteLock positionLock;
 constexpr qint64 kDeathEffectDurationMs = 450;
 constexpr int kDeathEffectRayCount = 8;
 
+// --- Core-profile (GL 3.3) shaders - see main.cpp's QSurfaceFormat setup,
+// which requests a core context, and setupShaders(), which compiles these.
+// ---
+
+// Shared by both the animal/plant quads and the death-effect lines (see
+// renderScene()/drawPrimitives()): transforms a logical-space position by
+// uProjection (built in resizeGL(), replacing the old fixed-function
+// glOrtho()) and passes the per-vertex RGBA color straight through.
+const char * const kPrimitiveVertexShaderSource = R"GLSL(
+#version 330 core
+layout(location = 0) in vec2 aPosition;
+layout(location = 1) in vec4 aColor;
+uniform mat4 uProjection;
+out vec4 vColor;
+void main()
+{
+    gl_Position = uProjection * vec4(aPosition, 0.0, 1.0);
+    vColor = aColor;
+}
+)GLSL";
+
+const char * const kPrimitiveFragmentShaderSource = R"GLSL(
+#version 330 core
+in vec4 vColor;
+out vec4 fragColor;
+void main()
+{
+    fragColor = vColor;
+}
+)GLSL";
+
+// Optional CRT post-process shader (see Laboratory::renderCrtPass()): draws
+// mSceneFbo's color texture through a static, full-screen NDC quad (see
+// setupCrtQuadBuffers()) rather than the old fixed-function fullscreen quad
+// keyed off gl_Vertex/gl_ModelViewProjectionMatrix.
+const char * const kCrtVertexShaderSource = R"GLSL(
+#version 330 core
+layout(location = 0) in vec2 aPosition;
+layout(location = 1) in vec2 aTexCoord;
+out vec2 vTexCoord;
+void main()
+{
+    gl_Position = vec4(aPosition, 0.0, 1.0);
+    vTexCoord = aTexCoord;
+}
+)GLSL";
+
+const char * const kCrtFragmentShaderSource = R"GLSL(
+#version 330 core
+uniform sampler2D uScene;
+uniform vec2 uResolution;
+uniform float uTime;
+in vec2 vTexCoord;
+out vec4 fragColor;
+
+void main()
+{
+    // Barrel distortion, centered on the screen.
+    vec2 centered = vTexCoord * 2.0 - 1.0;
+    vec2 warped = centered + centered.yx * centered.yx * centered * 0.16;
+    vec2 uv = warped * 0.5 + 0.5;
+
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0)
+    {
+        fragColor = vec4(0.0, 0.0, 0.0, 1.0);
+        return;
+    }
+
+    vec3 color = texture(uScene, uv).rgb;
+
+    // Pixel bloom: sample two concentric rings of neighboring texels (a
+    // tight one and a wider one, so the glow actually reaches a few cells
+    // out rather than just softening each sprite's immediate edge) and add
+    // back their bright parts, so saturated sprite pixels glow outward into
+    // the darker cells around them instead of blurring everything equally.
+    // A low luminance threshold means most palette colors (not just
+    // near-white ones) contribute, and the final multiplier is pushed well
+    // past "subtle" - this is meant to be a clearly visible glow.
+    vec2 texel = 1.0 / uResolution;
+    vec3 bloom = vec3(0.0);
+    float bloomWeight = 0.0;
+    for (int ring = 1; ring <= 2; ++ring)
+    {
+        float radius = float(ring) * 2.2;
+        float ringWeight = 1.0 / float(ring);
+        for (int dx = -1; dx <= 1; ++dx)
+        {
+            for (int dy = -1; dy <= 1; ++dy)
+            {
+                if (dx == 0 && dy == 0)
+                {
+                    continue;
+                }
+                vec3 neighbor = texture(uScene, uv + vec2(float(dx), float(dy)) * texel * radius).rgb;
+                float luminance = dot(neighbor, vec3(0.299, 0.587, 0.114));
+                bloom += neighbor * smoothstep(0.12, 0.85, luminance) * ringWeight;
+                bloomWeight += ringWeight;
+            }
+        }
+    }
+    color += bloom * (2.4 / bloomWeight);
+
+    // Horizontal scanlines. Density is tied to the actual pixel resolution
+    // (so line spacing stays consistent regardless of window size/zoom) but
+    // divided down from a 1:1 pixel rate - chunkier, more clearly "low-res"
+    // scanlines with visible gaps between them, rather than a near-solid
+    // dark/light dither every single row.
+    const float kScanlineResolutionDivisor = 4.0;
+    float scanline = sin(uv.y * (uResolution.y / kScanlineResolutionDivisor) * 3.14159265);
+    color *= mix(0.72, 1.0, scanline * 0.5 + 0.5);
+
+    // Soft vignette toward the corners.
+    vec2 vignetteCoord = uv - 0.5;
+    float vignette = 1.0 - dot(vignetteCoord, vignetteCoord) * 0.9;
+    color *= clamp(vignette, 0.0, 1.0);
+
+    // Faint flicker, subtle enough not to be distracting.
+    color *= 0.96 + 0.04 * sin(uTime * 47.0);
+
+    fragColor = vec4(color, 1.0);
+}
+)GLSL";
+
 Laboratory::Laboratory(QWidget *parent) :
     QOpenGLWidget(parent),
     ui(new Ui::Laboratory)
@@ -73,16 +192,20 @@ Laboratory::Laboratory(QWidget *parent) :
 
     mSpeed = 0;
 
-    resize(qRound(LABORATORY_WIDTH * mZoom), qRound(LABORATORY_HEIGHT * mZoom));
+    resize(targetSize());
 
     mSpecies = loadSpecies();
 
     QSettings settings("ryank", "Evolve", this);
     setPlantPattern(settings.value("Plants.Pattern", plantPatternOneGroup).value<PlantPattern>());
+    mCrtShaderEnabled = settings.value("Display/CrtShaderEnabled", false).toBool();
 
     auto * plants = new Species(Species::typePlant);
     plants->setName("Plant");
-    plants->setColor(QColor(Qt::green));
+    // DB16 "green" swatch (#6daa2c) - see colorForIndex() below for the rest
+    // of the palette mapping. Kept brighter than DB16's darker #346524 so
+    // single-pixel plant quads stay readable against the near-black canvas.
+    plants->setColor(QColor(0x6d, 0xaa, 0x2c));
     plants->setMetabolism(10.0);
     plants->setSpawningEnergy(PLANT_SPAWN_ENERGY);
     plants->setMovement(0, 0, MoveStop);
@@ -114,6 +237,29 @@ Laboratory::~Laboratory()
     QThreadPool::globalInstance()->waitForDone();
     qDeleteAll(mSpecies);
     mSpecies.clear();
+
+    // Every GL object below is only ever allocated while this widget's own
+    // GL context is current (mSceneVao/mSceneVbo/mCrtVao/mCrtVbo/
+    // mPrimitiveShaderProgram unconditionally, from initializeGL();
+    // mSceneFbo/mCrtShaderProgram lazily, from ensureCrtResources() the
+    // first time the CRT shader is enabled) - deleting them needs that same
+    // context current again, not whatever happens to be current now.
+    if (mSceneVao != 0 || mSceneFbo != nullptr || mCrtShaderProgram != nullptr)
+    {
+        makeCurrent();
+        glDeleteVertexArrays(1, &mSceneVao);
+        glDeleteBuffers(1, &mSceneVbo);
+        glDeleteVertexArrays(1, &mCrtVao);
+        glDeleteBuffers(1, &mCrtVbo);
+        delete mPrimitiveShaderProgram;
+        mPrimitiveShaderProgram = nullptr;
+        delete mSceneFbo;
+        mSceneFbo = nullptr;
+        delete mCrtShaderProgram;
+        mCrtShaderProgram = nullptr;
+        doneCurrent();
+    }
+
     delete ui;
 }
 
@@ -595,39 +741,211 @@ void Laboratory::setPlantPattern(int pattern)
     }
 }
 
+void Laboratory::setCrtShaderEnabled(bool enabled)
+{
+    if (mCrtShaderEnabled == enabled)
+    {
+        return;
+    }
+    mCrtShaderEnabled = enabled;
+    QSettings settings("ryank", "Evolve", this);
+    settings.setValue("Display/CrtShaderEnabled", enabled);
+    update();
+}
+
 void Laboratory::initializeGL()
 {
-    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);               // Black Background
-    glDisable(GL_DEPTH_TEST);                            // Disables Depth Testing
-    gluOrtho2D(GLdouble(0.0), static_cast<GLdouble>(LABORATORY_WIDTH), static_cast<GLdouble>(LABORATORY_HEIGHT), GLdouble(0.0));
-//    glEnable(GL_BLEND);
-//    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    initializeOpenGLFunctions();
+
+    // DB16 "near-black" (#140c1c) - the same dark swatch used for the
+    // chart/settings-button backgrounds elsewhere in the theme. Slightly
+    // lighter than pure black so the CRT shader's scanlines (which darken
+    // alternate rows) are actually visible - on a true-black background
+    // "darker than black" has nothing to show.
+    glClearColor(0.078f, 0.047f, 0.110f, 1.0f);
+    glDisable(GL_DEPTH_TEST);
+    // No polygon/line smoothing to disable here, unlike the old fixed-
+    // function pipeline - core-profile rendering has no such implicit
+    // fixed-function AA path in the first place, so this canvas is already
+    // hard-edged by default.
+
+    setupShaders();
+    setupSceneBuffers();
+    setupCrtQuadBuffers();
 }
 
 void Laboratory::resizeGL(int w, int h)
 {
-//    glViewport( 0, 0, (GLint)w, (GLint)h );
-    if (h==0)                           // Prevent A Divide By Zero By
+    if (h == 0) // Prevent a divide by zero (heightForWidth() et al) by
     {
-            h=1;                        // Making Height Equal One
+        h = 1; // making height equal one.
     }
 
-    glViewport(0, 0, w, h);             // Reset The Current Viewport
-    glMatrixMode(GL_PROJECTION);        // Select The Projection Matrix
-    glLoadIdentity();                   // Reset The Projection Matrix
-    // Calculate The Aspect Ratio Of The Window
-//    gluPerspective(90.0f,(GLfloat)w/(GLfloat)h,0.1f,100.0f);
+    glViewport(0, 0, w, h);
 
-    glOrtho(0, LABORATORY_WIDTH, LABORATORY_HEIGHT, 0, 0, 1);
-    glMatrixMode(GL_MODELVIEW);         // Select The Modelview Matrix
-    glLoadIdentity();                   // Reset The Modelview Matrix
+    // Replaces the old fixed-function glOrtho()/matrix-stack setup: same
+    // top-left-origin logical (0,0)-(LABORATORY_WIDTH,LABORATORY_HEIGHT)
+    // space, now built as an explicit matrix uploaded to
+    // mPrimitiveShaderProgram's uProjection uniform in renderScene().
+    mProjection.setToIdentity();
+    mProjection.ortho(0.0f, float(LABORATORY_WIDTH), float(LABORATORY_HEIGHT), 0.0f, -1.0f, 1.0f);
+
+    mViewportWidth = w;
+    mViewportHeight = h;
+}
+
+void Laboratory::setupShaders()
+{
+    mPrimitiveShaderProgram = new QOpenGLShaderProgram();
+    mPrimitiveShaderProgram->addShaderFromSourceCode(QOpenGLShader::Vertex, kPrimitiveVertexShaderSource);
+    mPrimitiveShaderProgram->addShaderFromSourceCode(QOpenGLShader::Fragment, kPrimitiveFragmentShaderSource);
+    if (!mPrimitiveShaderProgram->link())
+    {
+        qWarning() << "Laboratory: primitive shader failed to link:" << mPrimitiveShaderProgram->log();
+    }
+
+    // mCrtShaderProgram is deliberately NOT compiled here - see
+    // ensureCrtResources(), which lazily compiles it (and mSceneFbo) only
+    // once the CRT shader is actually turned on.
+}
+
+void Laboratory::setupSceneBuffers()
+{
+    glGenVertexArrays(1, &mSceneVao);
+    glGenBuffers(1, &mSceneVbo);
+
+    glBindVertexArray(mSceneVao);
+    glBindBuffer(GL_ARRAY_BUFFER, mSceneVbo);
+    // No data uploaded here - the scene changes every tick, so
+    // drawPrimitives() re-uploads it fresh each frame via glBufferData();
+    // this just establishes the vertex layout (interleaved vec2 position +
+    // vec4 color) against mSceneVbo, which stays bound to these attribute
+    // slots for the life of the VAO.
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 6 * sizeof(GLfloat), reinterpret_cast<void *>(0));
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 6 * sizeof(GLfloat), reinterpret_cast<void *>(2 * sizeof(GLfloat)));
+    glEnableVertexAttribArray(1);
+
+    glBindVertexArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+}
+
+void Laboratory::setupCrtQuadBuffers()
+{
+    // Two triangles covering NDC space exactly (the CRT pass needs no
+    // projection matrix - it's already drawing directly in clip space).
+    // Texcoords match mSceneFbo's texel convention: world-y=0 (the
+    // logical/visual top row of the scene) was rendered to NDC y=+1 (see
+    // resizeGL()'s ortho(..., bottom=LABORATORY_HEIGHT, top=0, ...)), which
+    // is also where OpenGL's texture t=1 ends up - so NDC-top maps straight
+    // to texcoord-top with no flip needed.
+    const GLfloat quad[] = {
+        // x,     y,     u,    v
+        -1.0f,  1.0f,  0.0f, 1.0f, // top-left
+         1.0f,  1.0f,  1.0f, 1.0f, // top-right
+         1.0f, -1.0f,  1.0f, 0.0f, // bottom-right
+        -1.0f,  1.0f,  0.0f, 1.0f, // top-left
+         1.0f, -1.0f,  1.0f, 0.0f, // bottom-right
+        -1.0f, -1.0f,  0.0f, 0.0f, // bottom-left
+    };
+
+    glGenVertexArrays(1, &mCrtVao);
+    glGenBuffers(1, &mCrtVbo);
+
+    glBindVertexArray(mCrtVao);
+    glBindBuffer(GL_ARRAY_BUFFER, mCrtVbo);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(quad), quad, GL_STATIC_DRAW);
+
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(GLfloat), reinterpret_cast<void *>(0));
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(GLfloat), reinterpret_cast<void *>(2 * sizeof(GLfloat)));
+    glEnableVertexAttribArray(1);
+
+    glBindVertexArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+}
+
+void Laboratory::drawPrimitives(GLenum mode, const QVector<GLfloat> & vertices)
+{
+    if (vertices.isEmpty())
+    {
+        return;
+    }
+
+    glBindVertexArray(mSceneVao);
+    glBindBuffer(GL_ARRAY_BUFFER, mSceneVbo);
+    glBufferData(GL_ARRAY_BUFFER, vertices.size() * qsizetype(sizeof(GLfloat)), vertices.constData(), GL_DYNAMIC_DRAW);
+
+    // 6 floats (x, y, r, g, b, a) per vertex - see setupSceneBuffers().
+    glDrawArrays(mode, 0, GLsizei(vertices.size() / 6));
+
+    glBindVertexArray(0);
 }
 
 void Laboratory::paintGL()
 {
+    if (mCrtShaderEnabled && mViewportWidth > 0 && mViewportHeight > 0)
+    {
+        ensureCrtResources(mViewportWidth, mViewportHeight);
+    }
+
+    if (mCrtShaderEnabled && mSceneFbo != nullptr && mCrtShaderProgram != nullptr && mCrtShaderProgram->isLinked())
+    {
+        mSceneFbo->bind();
+        renderScene();
+        mSceneFbo->release();
+
+        renderCrtPass();
+    }
+    else
+    {
+        renderScene();
+    }
+}
+
+void Laboratory::ensureCrtResources(int w, int h)
+{
+    if (mSceneFbo == nullptr || mSceneFbo->size() != QSize(w, h))
+    {
+        delete mSceneFbo;
+        mSceneFbo = new QOpenGLFramebufferObject(w, h);
+    }
+
+    if (mCrtShaderProgram == nullptr)
+    {
+        mCrtShaderProgram = new QOpenGLShaderProgram();
+        mCrtShaderProgram->addShaderFromSourceCode(QOpenGLShader::Vertex, kCrtVertexShaderSource);
+        mCrtShaderProgram->addShaderFromSourceCode(QOpenGLShader::Fragment, kCrtFragmentShaderSource);
+        if (!mCrtShaderProgram->link())
+        {
+            qWarning() << "Laboratory: CRT shader failed to link, falling back to unshaded rendering:"
+                       << mCrtShaderProgram->log();
+        }
+    }
+}
+
+void Laboratory::renderCrtPass()
+{
     glClear(GL_COLOR_BUFFER_BIT);
-    glLoadIdentity();
-    glTranslatef(0.375, 0.375, 0);
+
+    mCrtShaderProgram->bind();
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, mSceneFbo->texture());
+    mCrtShaderProgram->setUniformValue("uScene", 0);
+    mCrtShaderProgram->setUniformValue("uResolution", QVector2D(float(mViewportWidth), float(mViewportHeight)));
+    mCrtShaderProgram->setUniformValue("uTime", float(mEffectsTimer.elapsed()) / 1000.0f);
+
+    glBindVertexArray(mCrtVao);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+    glBindVertexArray(0);
+
+    glBindTexture(GL_TEXTURE_2D, 0);
+    mCrtShaderProgram->release();
+}
+
+void Laboratory::renderScene()
+{
+    glClear(GL_COLOR_BUFFER_BIT);
 
     QVector<PaintQuad> quads;
     QVector<DeathEffectAnim> effects;
@@ -642,11 +960,16 @@ void Laboratory::paintGL()
         effects = mDeathEffects;
     }
 
+    mPrimitiveShaderProgram->bind();
+    mPrimitiveShaderProgram->setUniformValue("uProjection", mProjection);
+
     if (!effects.isEmpty())
     {
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        glLineWidth(1.5f);
+        // 6 floats per vertex (x, y, r, g, b, a), 2 vertices per ray - see
+        // setupSceneBuffers()/drawPrimitives().
+        QVector<GLfloat> lineVertices;
+        lineVertices.reserve(effects.size() * kDeathEffectRayCount * 2 * 6);
+
         const qint64 now = mEffectsTimer.elapsed();
         for (const DeathEffectAnim & effect : qAsConst(effects))
         {
@@ -656,58 +979,71 @@ void Laboratory::paintGL()
             const float innerR = qMax(0.0f, outerR - 2.5f);
             const float alpha = 1.0f - t;
 
-            glBegin(GL_LINES);
-            glColor4f(float(effect.color.redF()), float(effect.color.greenF()), float(effect.color.blueF()), alpha);
+            // Pixel-art pass: snap the burst's origin to the same whole-unit
+            // grid the animal/plant quads snap to below, so the death effect
+            // reads as an extension of the blocky sprite it replaced rather
+            // than a smoothly-floating vector burst.
+            const float cx = qFloor(float(effect.pos.x())) + 0.5f;
+            const float cy = qFloor(float(effect.pos.y())) + 0.5f;
+            const float r = float(effect.color.redF());
+            const float g = float(effect.color.greenF());
+            const float b = float(effect.color.blueF());
+
             for (int i = 0; i < kDeathEffectRayCount; ++i)
             {
                 const float angle = (2.0f * float(M_PI) * i) / kDeathEffectRayCount;
                 const float c = qCos(angle);
                 const float s = qSin(angle);
-                glVertex2f(float(effect.pos.x()) + c * innerR, float(effect.pos.y()) + s * innerR);
-                glVertex2f(float(effect.pos.x()) + c * outerR, float(effect.pos.y()) + s * outerR);
+                lineVertices << cx + c * innerR << cy + s * innerR << r << g << b << alpha;
+                lineVertices << cx + c * outerR << cy + s * outerR << r << g << b << alpha;
             }
-            glEnd();
         }
+
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glLineWidth(1.5f);
+        drawPrimitives(GL_LINES, lineVertices);
         glLineWidth(1.0f);
         glDisable(GL_BLEND);
     }
 
-    if (quads.isEmpty())
+    if (!quads.isEmpty())
     {
-        return;
-    }
-
-    QVector<GLfloat> vertices;
-    QVector<GLfloat> colors;
-    vertices.resize(quads.size() * 8);
-    colors.resize(quads.size() * 12);
-    GLfloat * vert = vertices.data();
-    GLfloat * col = colors.data();
-    for (const PaintQuad & quad : qAsConst(quads))
-    {
-        const GLfloat x = quad.x;
-        const GLfloat y = quad.y;
-        vert[0] = x - 1; vert[1] = y + 1;
-        vert[2] = x + 1; vert[3] = y + 1;
-        vert[4] = x + 1; vert[5] = y - 1;
-        vert[6] = x - 1; vert[7] = y - 1;
-        vert += 8;
-        for (int i = 0; i < 4; ++i)
+        // 6 vertices (2 triangles) per quad, since core profile has no
+        // GL_QUADS - fan-triangulated as (0,1,2) + (0,2,3), preserving the
+        // old GL_QUADS corner order/winding exactly.
+        QVector<GLfloat> triVertices;
+        triVertices.reserve(quads.size() * 6 * 6);
+        static constexpr int kTriangleCornerIndices[6] = { 0, 1, 2, 0, 2, 3 };
+        for (const PaintQuad & quad : qAsConst(quads))
         {
-            col[0] = quad.r;
-            col[1] = quad.g;
-            col[2] = quad.b;
-            col += 3;
+            // Pixel-art pass: snap each animal/plant's draw position to the
+            // nearest whole lab-grid cell before building its quad, instead
+            // of drawing at its exact sub-unit simulated position. This is
+            // purely a rendering-time rounding of captureFrame()'s already-
+            // captured snapshot - it never touches the underlying
+            // Animal::pos() the simulation actually uses - but it's what
+            // turns continuous motion into the blocky, grid-aligned look
+            // the rest of the theme uses.
+            const GLfloat x = qFloor(quad.x) + 0.5f;
+            const GLfloat y = qFloor(quad.y) + 0.5f;
+            const GLfloat corners[4][2] = {
+                { x - 1, y + 1 },
+                { x + 1, y + 1 },
+                { x + 1, y - 1 },
+                { x - 1, y - 1 },
+            };
+            for (int cornerIndex : kTriangleCornerIndices)
+            {
+                triVertices << corners[cornerIndex][0] << corners[cornerIndex][1]
+                            << quad.r << quad.g << quad.b << 1.0f;
+            }
         }
+
+        drawPrimitives(GL_TRIANGLES, triVertices);
     }
 
-    glEnableClientState(GL_VERTEX_ARRAY);
-    glEnableClientState(GL_COLOR_ARRAY);
-    glVertexPointer(2, GL_FLOAT, 0, vertices.constData());
-    glColorPointer(3, GL_FLOAT, 0, colors.constData());
-    glDrawArrays(GL_QUADS, 0, GLsizei(quads.size() * 4));
-    glDisableClientState(GL_COLOR_ARRAY);
-    glDisableClientState(GL_VERTEX_ARRAY);
+    mPrimitiveShaderProgram->release();
 }
 
 int Laboratory::heightForWidth(int w) const
@@ -746,9 +1082,24 @@ qreal Laboratory::fitZoom() const
     return qMin(widthFit, heightFit);
 }
 
+QSize Laboratory::targetSize() const
+{
+    QScrollArea * scrollArea = enclosingScrollArea();
+    const QSize viewportSize = scrollArea ? scrollArea->viewport()->size() : QSize();
+    if (!scrollArea || viewportSize.width() <= 0 || viewportSize.height() <= 0)
+    {
+        return QSize(qRound(LABORATORY_WIDTH * mZoom), qRound(LABORATORY_HEIGHT * mZoom));
+    }
+
+    const qreal fit = fitZoom();
+    const qreal relativeZoom = (fit > 0.0) ? (mZoom / fit) : 1.0;
+    return QSize(qRound(viewportSize.width() * relativeZoom), qRound(viewportSize.height() * relativeZoom));
+}
+
 void Laboratory::applyZoom(qreal newZoom, const QPoint & anchor)
 {
-    newZoom = qBound(fitZoom(), newZoom, kMaxZoom);
+    const qreal fit = fitZoom();
+    newZoom = qBound(fit, newZoom, kMaxZoom);
     if (qFuzzyCompare(newZoom, mZoom))
     {
         return;
@@ -765,7 +1116,11 @@ void Laboratory::applyZoom(qreal newZoom, const QPoint & anchor)
 
     const qreal scaleFactor = newZoom / mZoom;
     mZoom = newZoom;
-    resize(qRound(LABORATORY_WIDTH * mZoom), qRound(LABORATORY_HEIGHT * mZoom));
+    // Back to exactly the fit floor (e.g. the user wheel-zoomed all the way
+    // back out) - resume auto-filling the panel on future resizes instead
+    // of staying pinned at whatever pixel size this zoom-out landed on.
+    mZoomedByUser = !qFuzzyCompare(mZoom, fit);
+    resize(targetSize());
 
     if (scrollArea)
     {
@@ -863,14 +1218,15 @@ bool Laboratory::eventFilter(QObject * watched, QEvent * event)
     if (event->type() == QEvent::Resize)
     {
         // The viewport just changed size, so the fit-to-window zoom floor
-        // (see fitZoom()) may have moved too. Re-apply the current zoom so
-        // it gets clamped back up to the new floor if it now falls under it
-        // - otherwise growing the window would leave the lab under-filling
-        // the viewport instead of covering it.
+        // (see fitZoom()) may have moved too. If the user hasn't manually
+        // zoomed in (mZoomedByUser), snap straight to the new fit so the
+        // lab keeps exactly covering the panel (see targetSize()) with no
+        // letterboxing on either axis; otherwise just re-clamp their
+        // current zoom against the new floor, same as before.
         if (QScrollArea * scrollArea = enclosingScrollArea(); scrollArea && watched == scrollArea->viewport())
         {
             const QPoint anchor(scrollArea->viewport()->width() / 2, scrollArea->viewport()->height() / 2);
-            applyZoom(mZoom, anchor);
+            applyZoom(mZoomedByUser ? mZoom : fitZoom(), anchor);
         }
     }
     return QOpenGLWidget::eventFilter(watched, event);
@@ -953,34 +1309,41 @@ void Laboratory::handleCanvasClicked(const QPoint & localPos)
     dialog.exec();
 }
 
+// DawnBringer 16 (DB16) palette, remapped from the original smooth-gradient
+// per-species colors to the nearest/most-distinct DB16 swatches (see the
+// pixel-art presentation pass: resources/theme.qss carries the same
+// palette for the app chrome). #346524/#6daa2c (DB16's two greens) and
+// #140c1c/#ffffff (canvas background / reserved bright text) are
+// deliberately left out of this list so animal species never get
+// confused with plants or with UI text drawn over the canvas.
 QColor Laboratory::colorForIndex(int index) const
 {
     switch(index)
     {
     case 0:
-        return QColor(0,104,132);
+        return QColor(0x59, 0x7d, 0xce); // blue
     case 1:
-        return QColor(0,144,158);
+        return QColor(0x6d, 0xc2, 0xca); // cyan
     case 2:
-        return QColor(137,219,236);
+        return QColor(0x85, 0x95, 0xa1); // light steel
     case 3:
-        return QColor(237,0,38);
+        return QColor(0xd0, 0x46, 0x48); // red
     case 4:
-        return QColor(250,157,0);
+        return QColor(0xd2, 0x7d, 0x2c); // orange
     case 5:
-        return QColor(255,208,141);
+        return QColor(0xd2, 0xaa, 0x99); // tan
     case 6:
-        return QColor(176,0,81);
+        return QColor(0x85, 0x4c, 0x30); // brown
     case 7:
-        return QColor(246,131,112);
+        return QColor(0x44, 0x24, 0x34); // dark maroon
     case 8:
-        return QColor(254,171,185);
+        return QColor(0x30, 0x34, 0x6d); // dark indigo
     case 9:
-        return QColor(110,0,108);
+        return QColor(0x4e, 0x4a, 0x4e); // slate
     case 10:
-        return QColor(145,39,143);
+        return QColor(0x75, 0x71, 0x61); // khaki
     case 11:
-        return QColor(207,151,215);
+        return QColor(0xd2, 0xd2, 0xd2); // light gray
     case 12:
     default:
         return QColor(Qt::white);

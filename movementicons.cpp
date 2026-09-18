@@ -1,6 +1,35 @@
 #include "movementicons.h"
 
-QPixmap movementIcon(MovementDirections direction)
+#include <QPainter>
+
+namespace {
+
+// The bundled action icons (resources/actions/*.png) are modern flat-shaded
+// blue/red arrows that clash with the DB16 pixel-art theme applied
+// everywhere else (see resources/theme.qss) - they're minor/secondary UI
+// elements (direction hints on buttons/labels), so rather than hand-author
+// new sprite art (no image-generation tool is available this session), they
+// get tinted to a single DB16 ink color here. Cheap: a SourceIn composite
+// over the existing pixmap's own alpha shape, so the arrow silhouettes are
+// unchanged and no new artwork is needed.
+QPixmap tinted(const QPixmap & source, const QColor & color)
+{
+    if (source.isNull())
+    {
+        return source;
+    }
+    QPixmap result(source.size());
+    result.setDevicePixelRatio(source.devicePixelRatio());
+    result.fill(Qt::transparent);
+    QPainter painter(&result);
+    painter.drawPixmap(0, 0, source);
+    painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
+    painter.fillRect(result.rect(), color);
+    painter.end();
+    return result;
+}
+
+QPixmap rawMovementIcon(MovementDirections direction)
 {
     switch (direction)
     {
@@ -39,6 +68,17 @@ QPixmap movementIcon(MovementDirections direction)
     default:
         return QPixmap();
     }
+}
+
+} // namespace
+
+QPixmap movementIcon(MovementDirections direction)
+{
+    // DB16 "light gray" (#d2d2d2) - the same tone resources/theme.qss uses
+    // for body text, so these icons read as ink marks alongside the labels
+    // they sit next to rather than as separately-colored artwork.
+    static const QColor kIconTint(0xd2, 0xd2, 0xd2);
+    return tinted(rawMovementIcon(direction), kIconTint);
 }
 
 QString movementToolTip(MovementDirections direction)

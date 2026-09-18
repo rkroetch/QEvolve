@@ -2,6 +2,8 @@
 #define LABORATORY_H
 
 #include <QtOpenGLWidgets/QOpenGLWidget>
+#include <QOpenGLFunctions_3_3_Core>
+#include <QMatrix4x4>
 #include <QTimer>
 #include <QElapsedTimer>
 #include <QPaintEvent>
@@ -16,9 +18,7 @@
 #include <QColor>
 #include <QPoint>
 #include <atomic>
-#include <Windows.h>
 
-#include <gl/GL.h>
 #include "common.h"
 #include "runstate.h"
 #include "difficultycurve.h"
@@ -31,6 +31,8 @@ class QWheelEvent;
 class QMouseEvent;
 class QShowEvent;
 class QEvent;
+class QOpenGLShaderProgram;
+class QOpenGLFramebufferObject;
 
 struct PaintQuad
 {
@@ -54,7 +56,15 @@ namespace Ui {
     class Laboratory;
 }
 
-class Laboratory : public QOpenGLWidget
+// Renders via modern core-profile OpenGL (3.3 core - see main.cpp's
+// QSurfaceFormat setup): all geometry goes through VAOs/VBOs and GLSL 330
+// shaders (mPrimitiveShaderProgram for the animal/plant quads and
+// death-effect lines, mCrtShaderProgram for the optional post-process
+// pass). No fixed-function calls (glBegin/glEnd, the matrix stack, client-
+// state vertex arrays) anywhere - QOpenGLFunctions_3_3_Core deliberately
+// doesn't expose them, so misusing a removed function is a compile error
+// rather than a silent no-op/GL_INVALID_OPERATION at runtime.
+class Laboratory : public QOpenGLWidget, protected QOpenGLFunctions_3_3_Core
 {
     Q_OBJECT
 public:
@@ -90,9 +100,16 @@ public:
     qint64 runTicks() const { return mRunTicks; }
     Species * playerSpecies() const { return mRunConfig.playerSpecies; }
 
+    // Optional CRT post-process (scanlines/vignette/curvature) applied to
+    // the whole canvas - see the Settings dialog (settings-gear overlay,
+    // top-right of the laboratory view). Persisted via QSettings so it
+    // survives an app restart; off by default.
+    bool crtShaderEnabled() const { return mCrtShaderEnabled; }
+
 public slots:
     //0 being fastest
     void setSpeed(int speed) { mSpeed.storeRelaxed(speed); }
+    void setCrtShaderEnabled(bool enabled);
     void toggleStart();
     void start();
     void stop();
@@ -133,6 +150,31 @@ protected:
 private:
     QList<Species *> loadSpecies();
     void initActors();
+    // The pre-CRT-shader body of paintGL(): clears, draws the death-effect
+    // ray bursts, then the animal/plant quads. Renders into whatever
+    // framebuffer is currently bound - the widget's own when the CRT shader
+    // is off, or mSceneFbo (see ensureCrtResources()) when it's on.
+    void renderScene();
+    // Lazily (re)allocates mSceneFbo to match (w, h) and compiles/links
+    // mCrtShaderProgram on first use. Both are kept alive for the rest of
+    // the widget's life once allocated rather than torn down when the CRT
+    // shader is toggled off, to avoid alloc/link churn on every toggle.
+    void ensureCrtResources(int w, int h);
+    // Draws mSceneFbo's texture as a screen-covering quad through
+    // mCrtShaderProgram into whatever framebuffer is currently bound (the
+    // widget's own, once mSceneFbo has been released).
+    void renderCrtPass();
+
+    // One-time (initializeGL()) setup: compiles/links mPrimitiveShaderProgram
+    // and mCrtShaderProgram, and allocates every VAO/VBO this widget owns.
+    void setupShaders();
+    void setupSceneBuffers();
+    void setupCrtQuadBuffers();
+    // Re-uploads `vertices` into mSceneVbo and draws it as `mode` through
+    // mPrimitiveShaderProgram - shared by renderScene()'s death-effect-line
+    // and animal/plant-quad draw calls, which differ only in primitive type
+    // and vertex data.
+    void drawPrimitives(GLenum mode, const QVector<GLfloat> & vertices);
     // mAdvanceTimer's timeout target: drives run-state polling (if a run is
     // active) then repaints, replacing the old direct connect to update().
     void onAdvanceTick();
@@ -166,6 +208,20 @@ private:
     // left cropped/needing a scroll. Recomputed from the live viewport size
     // rather than cached, since that size changes with the window.
     qreal fitZoom() const;
+
+    // The widget size applyZoom()/the constructor should actually resize()
+    // to for the current mZoom. Below/at fitZoom() (i.e. mZoomedByUser ==
+    // false - see its declaration), this is exactly the enclosing scroll
+    // area's viewport size, stretched non-uniformly to cover it completely
+    // (no letterboxing on either axis) rather than the old uniform-scale
+    // "contain" sizing that left a gap on whichever axis fit loosest. Above
+    // fitZoom() (the user has wheel-zoomed in), both axes grow together
+    // from that same filled baseline by mZoom/fitZoom(), so zooming in
+    // never reintroduces new distortion beyond what filling already baked
+    // in. Falls back to the plain LABORATORY_WIDTH/HEIGHT * mZoom formula
+    // when there's no enclosing scroll area (or it has no usable size) yet
+    // to measure against.
+    QSize targetSize() const;
 
 private:
     Ui::Laboratory *ui;
@@ -210,7 +266,34 @@ private:
     QHash<Species *, int> mMetabolismSurgeBaseline;
     int mMetabolismSurgeEpochsRemaining = 0;
 
-    GLfloat mVertices[8 * 10000]{};
+    // --- Core-profile rendering resources (see setupShaders()/
+    // setupSceneBuffers()/setupCrtQuadBuffers(), all called once from
+    // initializeGL()) ---
+    // Shared by both the death-effect lines and the animal/plant quads -
+    // just a "transform position by uProjection, output per-vertex color"
+    // shader (see kPrimitiveVertexShaderSource/kPrimitiveFragmentShaderSource
+    // in laboratory.cpp).
+    QOpenGLShaderProgram * mPrimitiveShaderProgram = nullptr;
+    GLuint mSceneVao = 0;
+    GLuint mSceneVbo = 0;
+    // The logical (0,0)-(LABORATORY_WIDTH,LABORATORY_HEIGHT) -> clip-space
+    // orthographic projection, rebuilt in resizeGL() whenever the viewport
+    // size changes. Replaces the old fixed-function glOrtho()/matrix-stack
+    // setup - uploaded to mPrimitiveShaderProgram's uProjection uniform.
+    QMatrix4x4 mProjection;
+
+    // --- Optional CRT post-process shader ---
+    bool mCrtShaderEnabled = false;
+    QOpenGLShaderProgram * mCrtShaderProgram = nullptr;
+    QOpenGLFramebufferObject * mSceneFbo = nullptr;
+    // Static (built once in setupCrtQuadBuffers()) full-screen NDC quad
+    // used to draw mSceneFbo's texture through mCrtShaderProgram.
+    GLuint mCrtVao = 0;
+    GLuint mCrtVbo = 0;
+    // Cached from the most recent resizeGL() call - paintGL() doesn't
+    // receive the size directly, but needs it to (re)size mSceneFbo.
+    int mViewportWidth = 0;
+    int mViewportHeight = 0;
 
     // Fallback floor used only when the widget isn't (yet) hosted in a
     // scroll area to measure a viewport against - see fitZoom().
@@ -227,6 +310,13 @@ private:
     static constexpr qreal kHitTestRadius = 1.5;
 
     qreal mZoom = kDefaultZoom;
+    // False until the user actually wheel-zooms: while false, every
+    // viewport resize snaps mZoom straight to the new fitZoom() (see
+    // eventFilter()), so the lab keeps exactly filling its panel with no
+    // manual interaction needed. Set true on wheelEvent(); cleared again by
+    // applyZoom() itself once the user zooms back out to exactly fitZoom(),
+    // so zooming out all the way returns to auto-fill.
+    bool mZoomedByUser = false;
     bool mViewportFilterInstalled = false;
     bool mDragging = false;
     QPoint mDragStartMouse;

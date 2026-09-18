@@ -28,7 +28,11 @@ void RunResultDialog::buildUi(const RunResult & result)
     headlineFont.setBold(true);
     headlineFont.setPointSize(headlineFont.pointSize() + 6);
     headline->setFont(headlineFont);
-    headline->setStyleSheet(won ? QStringLiteral("color: #2e8b57;") : QStringLiteral("color: #b22222;"));
+    // DB16 palette (see resources/theme.qss): #6daa2c green for a win,
+    // #d04648 red for a loss - same swatches the run HUD's banner and
+    // Laboratory::colorForIndex()'s plant color use, so "victory" and
+    // "danger" read consistently across the whole app.
+    headline->setStyleSheet(won ? QStringLiteral("color: #6daa2c;") : QStringLiteral("color: #d04648;"));
     headline->setAlignment(Qt::AlignCenter);
     rootLayout->addWidget(headline);
 

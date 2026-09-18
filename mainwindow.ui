@@ -16,8 +16,20 @@
   <widget class="QWidget" name="centralWidget">
    <layout class="QVBoxLayout" name="verticalLayout_2">
     <item>
-     <layout class="QHBoxLayout" name="horizontalLayout">
-      <item>
+     <widget class="QSplitter" name="mainSplitter">
+      <property name="orientation">
+       <enum>Qt::Vertical</enum>
+      </property>
+      <property name="childrenCollapsible">
+       <bool>false</bool>
+      </property>
+      <widget class="QSplitter" name="topSplitter">
+       <property name="orientation">
+        <enum>Qt::Horizontal</enum>
+       </property>
+       <property name="childrenCollapsible">
+        <bool>false</bool>
+       </property>
        <widget class="QTextBrowser" name="textBrowser">
         <property name="font">
          <font>
@@ -25,8 +37,6 @@
          </font>
         </property>
        </widget>
-      </item>
-      <item>
        <widget class="QScrollArea" name="laboratoryScrollArea">
         <property name="sizePolicy">
          <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
@@ -48,21 +58,31 @@
          </property>
         </widget>
        </widget>
-      </item>
-      <item>
-       <widget class="SpeciesButtonLayoutWidget" name="speciesButtons" native="true">
+       <widget class="QScrollArea" name="speciesScrollArea">
         <property name="minimumSize">
          <size>
           <width>100</width>
           <height>0</height>
          </size>
         </property>
+        <property name="widgetResizable">
+         <bool>true</bool>
+        </property>
+        <widget class="SpeciesButtonLayoutWidget" name="speciesButtons" native="true">
+         <property name="geometry">
+          <rect>
+           <x>0</x>
+           <y>0</y>
+           <width>100</width>
+           <height>0</height>
+          </rect>
+         </property>
+        </widget>
        </widget>
-      </item>
-     </layout>
-    </item>
-    <item>
-     <widget class="QChartView" name="chartView"/>
+      </widget>
+      <widget class="QChartView" name="chartView"/>
+      <widget class="QChartView" name="populationChartView"/>
+     </widget>
     </item>
     <item>
      <layout class="QHBoxLayout" name="horizontalLayout_2">
@@ -155,6 +175,7 @@
    </attribute>
    <addaction name="actionShowStatistics"/>
    <addaction name="actionShowGraph"/>
+   <addaction name="actionShowSpeciesPopulation"/>
   </widget>
   <widget class="QStatusBar" name="statusBar"/>
   <action name="actionStart">
@@ -208,6 +229,14 @@
    </property>
    <property name="text">
     <string>Graph</string>
+   </property>
+  </action>
+  <action name="actionShowSpeciesPopulation">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>Population</string>
    </property>
   </action>
  </widget>

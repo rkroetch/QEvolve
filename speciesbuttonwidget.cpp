@@ -4,19 +4,30 @@
 #include <QStyleOptionButton>
 #include <QStylePainter>
 
+namespace {
+// Base button font is scaled up 2x to read well against the species-color
+// background, then trimmed by ~15% (2.0 * 0.85 = 1.7) so a full species
+// roster fits more comfortably in the sidebar.
+constexpr double kButtonFontScale = 1.7;
+} // namespace
+
 SpeciesButtonWidget::SpeciesButtonWidget(const QString & name, const QColor & color, QWidget *parent) :
     QPushButton(name, parent)
 {
     QFont buttonFont = font();
     if (buttonFont.pointSizeF() > 0)
     {
-        buttonFont.setPointSizeF(buttonFont.pointSizeF() * 2.0);
+        buttonFont.setPointSizeF(buttonFont.pointSizeF() * kButtonFontScale);
     }
     else
     {
-        buttonFont.setPixelSize(buttonFont.pixelSize() * 2);
+        buttonFont.setPixelSize(qRound(buttonFont.pixelSize() * kButtonFontScale));
     }
     setFont(buttonFont);
+
+    // Fill the full width of whatever sidebar/layout row this button sits
+    // in, rather than shrinking to fit each species' name.
+    setSizePolicy(QSizePolicy::Expanding, sizePolicy().verticalPolicy());
 
     setSpeciesColor(color);
 }
@@ -35,8 +46,12 @@ void SpeciesButtonWidget::setSpeciesName(const QString &text)
 
 QSize SpeciesButtonWidget::minimumSizeHint() const
 {
+    // QPushButton's own minimumSizeHint() already accounts for the current
+    // (enlarged) font's text width, so only enforce a floor here - a flat
+    // override would either clip long species names (e.g. "cruiser_2") or
+    // pointlessly widen short ones.
     auto sh = QPushButton::minimumSizeHint();
-    sh.setWidth(150);
+    sh.setWidth(qMax(sh.width(), 150));
     return sh;
 }
 

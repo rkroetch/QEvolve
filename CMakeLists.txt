@@ -45,6 +45,7 @@ qt_add_executable(QEvolve WIN32 MACOSX_BUNDLE
     mutationchoicedialog.cpp mutationchoicedialog.h
     runresultdialog.cpp runresultdialog.h
     runstate.h
+    settingsdialog.cpp settingsdialog.h
     species.cpp species.h
     speciesbuttonlayoutwidget.cpp speciesbuttonlayoutwidget.h speciesbuttonlayoutwidget.ui
     speciesbuttonwidget.cpp speciesbuttonwidget.h
@@ -62,7 +63,6 @@ target_link_libraries(QEvolve PRIVATE
     Qt::OpenGL
     Qt::OpenGLWidgets
     Qt::Widgets
-    glu32.lib
     opengl32.lib
 )
 
@@ -202,6 +202,15 @@ qt_add_resources(QEvolve "resources1"
         "/actions"
     FILES
         ${resources1_resource_files}
+)
+
+# Retro pixel-art app-wide QSS theme (DB16 palette) - see resources/theme.qss
+# and its loading in main.cpp.
+qt_add_resources(QEvolve "theme"
+    PREFIX
+        "/"
+    FILES
+        "resources/theme.qss"
 )
 
 add_custom_command(TARGET QEvolve POST_BUILD
